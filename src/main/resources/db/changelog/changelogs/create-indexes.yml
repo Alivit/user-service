@@ -1,0 +1,43 @@
+databaseChangeLog:
+  - changeSet:
+      id: 3
+      author: Chuiko Vitali
+      dbms: postgresql
+      changes:
+        - sql:
+            sql: "CREATE EXTENSION IF NOT EXISTS pg_trgm"
+  - changeSet:
+      id: 4
+      author: Chuiko Vitali
+      dbms: postgresql
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            indexExists:
+              indexName: idx_users_surname_trgm
+              tableName: users
+      changes:
+        - sql:
+            sql: "CREATE INDEX idx_users_surname_trgm ON users USING gin (surname gin_trgm_ops)"
+      rollback:
+        - sql:
+            sql: "DROP INDEX IF EXISTS idx_users_surname_trgm"
+  - changeSet:
+      id: 5
+      author: Chuiko Vitali
+      dbms: postgresql
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            indexExists:
+              indexName: idx_users_name_trgm
+              tableName: users
+      changes:
+        - sql:
+            sql: "CREATE INDEX idx_users_name_trgm ON users USING gin (name gin_trgm_ops);"
+      rollback:
+        - sql:
+            sql: "DROP INDEX IF EXISTS idx_users_name_trgm"
+
+
+
