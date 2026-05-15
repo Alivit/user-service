@@ -1,0 +1,49 @@
+databaseChangeLog:
+  - changeSet:
+      id: 1
+      author: Chuiko Vitali
+      changes:
+        - createTable:
+            tableName: users
+            columns:
+              - column:
+                  name: id
+                  type: uuid
+                  defaultValueComputed: gen_random_uuid()
+                  constraints:
+                    primaryKey: true
+              - column:
+                  name: name
+                  type: varchar(100)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: surname
+                  type: varchar(100)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: birth_date
+                  type: date
+              - column:
+                  name: email
+                  type: varchar(50)
+                  constraints:
+                    nullable: false
+                    unique: true
+              - column:
+                  name: active
+                  type: boolean
+                  constraints:
+                    nullable: false
+              - column:
+                  name: created_at
+                  type: timestamp
+                  constraints:
+                    nullable: false
+              - column:
+                  name: updated_at
+                  type: timestamp
+
+
+
