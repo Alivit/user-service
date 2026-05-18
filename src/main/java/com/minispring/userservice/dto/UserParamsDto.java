@@ -1,6 +1,6 @@
 package com.minispring.userservice.dto;
 
-public record ParamsDto(
+public record UserParamsDto(
         String name,
         String surname
 ) {

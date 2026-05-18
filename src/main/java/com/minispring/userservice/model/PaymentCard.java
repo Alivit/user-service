@@ -9,11 +9,13 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.UpdateTimestamp;
 import org.hibernate.annotations.UuidGenerator;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
-import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.UUID;
 
 @Entity
@@ -37,7 +39,8 @@ public class PaymentCard {
     private String holder;
 
     @Column(name = "expiration_date", nullable = false)
-    private LocalDate expirationDate;
+    @JdbcTypeCode(SqlTypes.DATE)
+    private YearMonth expirationDate;
 
     @Column(nullable = false, columnDefinition = "boolean default true")
     private Boolean active = Boolean.TRUE;
