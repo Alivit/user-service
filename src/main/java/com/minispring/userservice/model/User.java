@@ -40,8 +40,8 @@ public class User {
     @Column(nullable = false)
     private String email;
 
-    @Column(nullable = false)
-    private Boolean active;
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    private Boolean active = Boolean.TRUE;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

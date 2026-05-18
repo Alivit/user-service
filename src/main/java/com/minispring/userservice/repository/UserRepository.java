@@ -1,6 +1,6 @@
 package com.minispring.userservice.repository;
 
-import com.minispring.userservice.dto.ParamsDto;
+import com.minispring.userservice.dto.UserParamsDto;
 import com.minispring.userservice.model.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -12,7 +12,7 @@ import java.util.UUID;
 
 public interface UserRepository extends JpaRepository<User, UUID>, JpaSpecificationExecutor<User> {
 
-    default Page<User> findByParams(ParamsDto params, Pageable pageable) {
+    default Page<User> findByParams(UserParamsDto params, Pageable pageable) {
         if (params == null) {
             return findAll(pageable);
         }
