@@ -5,6 +5,7 @@ import com.minispring.userservice.dto.UserCreateDto;
 import com.minispring.userservice.dto.UserParamsDto;
 import com.minispring.userservice.dto.UserProfileDto;
 import com.minispring.userservice.dto.UserUpdateDto;
+import com.minispring.userservice.model.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
@@ -14,6 +15,8 @@ public interface UserService {
     UserProfileDto create(UserCreateDto userCreateDto);
 
     UserProfileDto getById(UUID userId);
+
+    User getExistingUser(UUID userId);
 
     Page<UserProfileDto> getAllBy(UserParamsDto userParamsDto, Pageable pageable);
 

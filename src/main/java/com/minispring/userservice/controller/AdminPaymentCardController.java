@@ -28,14 +28,14 @@ public class AdminPaymentCardController {
 
     private final PaymentCardService paymentCardService;
 
-    @GetMapping("/parameters")
+    @GetMapping
     public ResponseEntity<Page<PaymentCardProfileDto>> getAllCardsBy(@PageableDefault(size = 10, sort = "createdAt", direction = Sort.Direction.DESC)
                                                                      Pageable pageable
     ) {
         return ResponseEntity.ok(paymentCardService.getAllBy(pageable));
     }
 
-    @GetMapping("/{userId}")
+    @GetMapping("user/{userId}")
     public ResponseEntity<List<PaymentCardProfileDto>> getUserCards(@PathVariable UUID userId) {
         return ResponseEntity.ok(paymentCardService.getAll(userId));
     }

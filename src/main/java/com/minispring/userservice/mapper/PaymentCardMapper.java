@@ -21,8 +21,8 @@ import java.util.Locale;
         builder = @Builder(disableBuilder = true))
 public interface PaymentCardMapper {
 
-    @Mapping(target = "holder", expression = "java(toUpperCase(paymentCard.holder()))")
-    @Mapping(target = "number", expression = "java(toCleanCardNumber(paymentCard.number()))")
+    @Mapping(target = "holder", qualifiedByName = "UpperCaseModifier")
+    @Mapping(target = "number", qualifiedByName = "CleanCardNumber")
     PaymentCard paymentCardCreateDtoToPaymentCard(PaymentCardCreateDto paymentCard);
 
     PaymentCardProfileDto paymentCardToPaymentCardProfileDto(PaymentCard paymentCard);
@@ -30,15 +30,16 @@ public interface PaymentCardMapper {
     PaymentCardUpdateDto paymentCardToPaymentCardUpdateDto(PaymentCard paymentCard);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
-    @Mapping(target = "holder", source = "holder", qualifiedByName = "toUpperCaseModifier")
+    @Mapping(target = "holder", source = "holder", qualifiedByName = "UpperCaseModifier")
     @Mapping(target = "number", ignore = true)
     void updateCardFromDto(PaymentCardUpdateDto dto, @MappingTarget PaymentCard paymentCard);
 
-    @Named("toUpperCaseModifier")
+    @Named("UpperCaseModifier")
     default String toUpperCase(String value) {
         return value == null ? null : value.trim().toUpperCase(Locale.ENGLISH);
     }
 
+    @Named("CleanCardNumber")
     default String toCleanCardNumber(String cardNumber) {
         return cardNumber == null ? null : cardNumber.replaceAll("\\D", "");
     }

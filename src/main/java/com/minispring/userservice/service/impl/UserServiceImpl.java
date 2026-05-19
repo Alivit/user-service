@@ -5,6 +5,7 @@ import com.minispring.userservice.dto.UserCreateDto;
 import com.minispring.userservice.dto.UserParamsDto;
 import com.minispring.userservice.dto.UserProfileDto;
 import com.minispring.userservice.dto.UserUpdateDto;
+import com.minispring.userservice.exception.ResourceAlreadyExistsException;
 import com.minispring.userservice.exception.ResourceNotFoundException;
 import com.minispring.userservice.mapper.UserMapper;
 import com.minispring.userservice.model.User;
@@ -21,6 +22,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
 
+import static com.minispring.userservice.exception.ExceptionAnswer.EMAIL_EXIST;
 import static com.minispring.userservice.exception.ExceptionAnswer.USER_NOT_FOUND;
 
 @Slf4j
@@ -36,8 +38,11 @@ public class UserServiceImpl implements UserService {
     @Transactional
     @Override
     public UserProfileDto create(UserCreateDto userCreateDto) {
+        if (userRepository.existsByEmail(userCreateDto.email())) {
+            throw new ResourceAlreadyExistsException(String.format(EMAIL_EXIST, userCreateDto.email()));
+        }
         User userBeforeSaving = userMapper.userCreateDtoToUser(userCreateDto);
-        User savedUser = userRepository.save(userBeforeSaving);
+        User savedUser = userRepository.saveAndFlush(userBeforeSaving);
         log.debug("User with id {} created successfully Email: {}", savedUser.getId(), savedUser.getEmail());
         return userMapper.userToUserProfileDto(savedUser);
     }
@@ -60,6 +65,7 @@ public class UserServiceImpl implements UserService {
         User existingUser = getExistingUser(userId);
         UserUpdateDto userStateBefore = userMapper.userToUserUpdateDto(existingUser);
         userMapper.updateUserFromDto(userUpdateDto, existingUser);
+        userRepository.flush();
         UserUpdateDto userStateAfter = userMapper.userToUserUpdateDto(existingUser);
         Diff diff = javers.compare(userStateBefore, userStateAfter);
 
@@ -75,6 +81,7 @@ public class UserServiceImpl implements UserService {
         User existingUser = getExistingUser(userId);
         AdminUserUpdateDto userStateBefore = userMapper.userToAdminUserUpdateDto(existingUser);
         userMapper.updateUserFromDto(userUpdateDto, existingUser);
+        userRepository.flush();
         AdminUserUpdateDto userStateAfter = userMapper.userToAdminUserUpdateDto(existingUser);
         Diff diff = javers.compare(userStateBefore, userStateAfter);
 
@@ -89,6 +96,7 @@ public class UserServiceImpl implements UserService {
     public UserProfileDto deactivate(UUID userId) {
         User existingUser = getExistingUser(userId);
         existingUser.setActive(false);
+        userRepository.flush();
         log.debug("User ID: {} has been banned", userId);
         return userMapper.userToUserProfileDto(existingUser);
     }
@@ -98,11 +106,12 @@ public class UserServiceImpl implements UserService {
     public UserProfileDto activate(UUID userId) {
         User existingUser = getExistingUser(userId);
         existingUser.setActive(true);
+        userRepository.flush();
         log.debug("User ID: {} has been unbanned", userId);
         return userMapper.userToUserProfileDto(existingUser);
     }
 
-    private User getExistingUser(UUID userId) {
+    public User getExistingUser(UUID userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException(String.format(USER_NOT_FOUND, userId)));
     }
