@@ -10,16 +10,17 @@ import java.util.List;
 import java.util.UUID;
 
 public interface PaymentCardService {
-
     PaymentCardProfileDto create(UUID userId, PaymentCardCreateDto paymentCardCreateDto);
 
     PaymentCardProfileDto getById(UUID cardId);
 
     Page<PaymentCardProfileDto> getAllBy(Pageable pageable);
 
-    List<PaymentCardProfileDto> getAll();
+    List<PaymentCardProfileDto> getAll(UUID userId);
 
     PaymentCardProfileDto update(UUID cardId, PaymentCardUpdateDto paymentCardUpdateDto);
 
-    PaymentCardProfileDto setActive(UUID cardId);
+    PaymentCardProfileDto deactivate(UUID cardId);
+
+    PaymentCardProfileDto activate(UUID cardId);
 }

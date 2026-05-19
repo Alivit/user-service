@@ -1,7 +1,8 @@
 package com.minispring.userservice.service.impl;
 
-import com.minispring.userservice.dto.UserParamsDto;
+import com.minispring.userservice.dto.AdminUserUpdateDto;
 import com.minispring.userservice.dto.UserCreateDto;
+import com.minispring.userservice.dto.UserParamsDto;
 import com.minispring.userservice.dto.UserProfileDto;
 import com.minispring.userservice.dto.UserUpdateDto;
 import com.minispring.userservice.exception.ResourceNotFoundException;
@@ -18,7 +19,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.util.UUID;
 
 import static com.minispring.userservice.exception.ExceptionAnswer.USER_NOT_FOUND;
@@ -54,11 +54,6 @@ public class UserServiceImpl implements UserService {
         return userRepository.findByParams(userParamsDto, pageable).map(userMapper::userToUserProfileDto);
     }
 
-    @Override
-    public List<UserProfileDto> getAll() {
-        return userRepository.findAll().stream().map(userMapper::userToUserProfileDto).toList();
-    }
-
     @Transactional
     @Override
     public UserProfileDto update(UUID userId, UserUpdateDto userUpdateDto) {
@@ -76,10 +71,34 @@ public class UserServiceImpl implements UserService {
 
     @Transactional
     @Override
-    public UserProfileDto setActive(UUID userId) {
+    public UserProfileDto update(UUID userId, AdminUserUpdateDto userUpdateDto) {
         User existingUser = getExistingUser(userId);
-        existingUser.setActive(!existingUser.getActive());
-        log.debug("User ID: {}. Active status changed to: {}", userId, existingUser.getActive());
+        AdminUserUpdateDto userStateBefore = userMapper.userToAdminUserUpdateDto(existingUser);
+        userMapper.updateUserFromDto(userUpdateDto, existingUser);
+        AdminUserUpdateDto userStateAfter = userMapper.userToAdminUserUpdateDto(existingUser);
+        Diff diff = javers.compare(userStateBefore, userStateAfter);
+
+        if (diff.hasChanges()) {
+            log.debug("User {} have changes: {}", userId, diff.prettyPrint());
+        }
+        return userMapper.userToUserProfileDto(existingUser);
+    }
+
+    @Transactional
+    @Override
+    public UserProfileDto deactivate(UUID userId) {
+        User existingUser = getExistingUser(userId);
+        existingUser.setActive(false);
+        log.debug("User ID: {} has been banned", userId);
+        return userMapper.userToUserProfileDto(existingUser);
+    }
+
+    @Transactional
+    @Override
+    public UserProfileDto activate(UUID userId) {
+        User existingUser = getExistingUser(userId);
+        existingUser.setActive(true);
+        log.debug("User ID: {} has been unbanned", userId);
         return userMapper.userToUserProfileDto(existingUser);
     }
 

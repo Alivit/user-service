@@ -64,8 +64,8 @@ public class PaymentCardServiceImpl implements PaymentCardService {
     }
 
     @Override
-    public List<PaymentCardProfileDto> getAll() {
-        return paymentCardRepository.findAll().stream()
+    public List<PaymentCardProfileDto> getAll(UUID userId) {
+        return paymentCardRepository.findAllById(userId).stream()
                 .map(paymentCardMapper::paymentCardToPaymentCardProfileDto).toList();
     }
 
@@ -86,10 +86,19 @@ public class PaymentCardServiceImpl implements PaymentCardService {
 
     @Override
     @Transactional
-    public PaymentCardProfileDto setActive(UUID cardId) {
+    public PaymentCardProfileDto deactivate(UUID cardId) {
         PaymentCard existingCard = getExistingCard(cardId);
-        existingCard.setActive(!existingCard.getActive());
-        log.debug("Payment card ID: {}. Active status changed to: {}", cardId, existingCard.getActive());
+        existingCard.setActive(false);
+        log.debug("Payment card ID: {} has been banned", cardId);
+        return paymentCardMapper.paymentCardToPaymentCardProfileDto(existingCard);
+    }
+
+    @Override
+    @Transactional
+    public PaymentCardProfileDto activate(UUID cardId) {
+        PaymentCard existingCard = getExistingCard(cardId);
+        existingCard.setActive(true);
+        log.debug("Payment card ID: {} has been unbanned", cardId);
         return paymentCardMapper.paymentCardToPaymentCardProfileDto(existingCard);
     }
 
