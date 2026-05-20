@@ -15,6 +15,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.javers.core.Javers;
 import org.javers.core.diff.Diff;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -48,6 +51,7 @@ public class UserServiceImpl implements UserService {
     }
 
     @Override
+    @Cacheable(value = "user_info", key = "#userId")
     public UserProfileDto getById(UUID userId) {
         User foundedUser = getExistingUser(userId);
         log.debug("User with id {} has been found", userId);
@@ -61,6 +65,7 @@ public class UserServiceImpl implements UserService {
 
     @Transactional
     @Override
+    @CacheEvict(value = "user_info", key = "#userId")
     public UserProfileDto update(UUID userId, UserUpdateDto userUpdateDto) {
         User existingUser = getExistingUser(userId);
         UserUpdateDto userStateBefore = userMapper.userToUserUpdateDto(existingUser);
@@ -77,6 +82,7 @@ public class UserServiceImpl implements UserService {
 
     @Transactional
     @Override
+    @CacheEvict(value = "user_info", key = "#userId")
     public UserProfileDto update(UUID userId, AdminUserUpdateDto userUpdateDto) {
         User existingUser = getExistingUser(userId);
         AdminUserUpdateDto userStateBefore = userMapper.userToAdminUserUpdateDto(existingUser);
@@ -93,6 +99,10 @@ public class UserServiceImpl implements UserService {
 
     @Transactional
     @Override
+    @Caching(evict = {
+            @CacheEvict(value = "user_info", key = "#userId"),
+            @CacheEvict(value = "user_cards", key = "#userId")
+    })
     public UserProfileDto deactivate(UUID userId) {
         User existingUser = getExistingUser(userId);
         existingUser.setActive(false);
@@ -103,6 +113,7 @@ public class UserServiceImpl implements UserService {
 
     @Transactional
     @Override
+    @CacheEvict(value = "user_info", key = "#userId")
     public UserProfileDto activate(UUID userId) {
         User existingUser = getExistingUser(userId);
         existingUser.setActive(true);
