@@ -35,7 +35,7 @@ public class AdminPaymentCardController {
         return ResponseEntity.ok(paymentCardService.getAllBy(pageable));
     }
 
-    @GetMapping("user/{userId}")
+    @GetMapping("/user/{userId}")
     public ResponseEntity<List<PaymentCardProfileDto>> getUserCards(@PathVariable UUID userId) {
         return ResponseEntity.ok(paymentCardService.getAll(userId));
     }

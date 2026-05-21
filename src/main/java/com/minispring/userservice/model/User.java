@@ -5,12 +5,17 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.PostLoad;
+import jakarta.persistence.PostPersist;
 import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import lombok.AllArgsConstructor;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
-import org.hibernate.annotations.UuidGenerator;
+import org.springframework.data.domain.Persistable;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -22,10 +27,11 @@ import java.util.UUID;
 @Table(name = "users")
 @Getter
 @Setter
-public class User {
+@NoArgsConstructor
+@AllArgsConstructor
+public class User implements Persistable<UUID> {
 
     @Id
-    @UuidGenerator
     private UUID id;
 
     @Column(nullable = false)
@@ -43,6 +49,9 @@ public class User {
     @Column(nullable = false, columnDefinition = "boolean default true")
     private Boolean active = Boolean.TRUE;
 
+    @Transient
+    private boolean isNewEntity = true;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
@@ -54,4 +63,14 @@ public class User {
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<PaymentCard> cards = new ArrayList<>();
 
+    @Override
+    public boolean isNew() {
+        return isNewEntity;
+    }
+
+    @PostPersist
+    @PostLoad
+    void markNotNew() {
+        this.isNewEntity = false;
+    }
 }
