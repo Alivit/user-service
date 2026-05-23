@@ -11,13 +11,12 @@ import java.time.YearMonth;
 import static com.minispring.userservice.util.ValidationPattern.HOLDER_PATTERN;
 
 public record PaymentCardUpdateDto(
-        @CreditCardNumber
+        @CreditCardNumber(ignoreNonDigitCharacters = true)
         String number,
 
         @Size(min = 2, max = 50, message = "Holder must be between 2 and 50 characters long")
         @Pattern(regexp = HOLDER_PATTERN, message = "Invalid holder")
         String holder,
-
 
         @JsonFormat(pattern = "MM/yy")
         @FutureOrPresent(message = "The card has expired")

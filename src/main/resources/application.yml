@@ -5,6 +5,10 @@ spring:
     url: ${DATABASE_URL}
     username: ${DATABASE_USERNAME}
     password: ${DATABASE_PASSWORD}
+  data:
+    web:
+      pageable:
+        serialization-mode: via_dto
   jpa:
     hibernate:
       ddl-auto: none
