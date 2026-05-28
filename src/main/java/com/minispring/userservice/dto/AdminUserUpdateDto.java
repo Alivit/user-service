@@ -24,9 +24,6 @@ public record AdminUserUpdateDto(
         @JsonFormat(pattern = "yyyy-MM-dd")
         LocalDate birthDate,
 
-        Boolean active,
-
-        @Size(max = 5, message = "You can't link more than 5 cards")
-        List<@Valid PaymentCardCreateDto> cards
+        Boolean active
 ) {
 }

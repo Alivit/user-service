@@ -4,6 +4,7 @@ import com.minispring.userservice.BaseIntegrationTest;
 import com.minispring.userservice.dto.PaymentCardCreateDto;
 import com.minispring.userservice.dto.PaymentCardProfileDto;
 import com.minispring.userservice.model.User;
+import com.minispring.userservice.repository.PaymentCardRepository;
 import com.minispring.userservice.repository.UserRepository;
 import com.minispring.userservice.service.PaymentCardService;
 import org.instancio.Instancio;
@@ -26,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.InstanceOfAssertFactories.LIST;
 import static org.instancio.Select.field;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
 @AutoConfigureMockMvc
 public class UserCardPaymentControllerIT extends BaseIntegrationTest {
@@ -38,6 +40,9 @@ public class UserCardPaymentControllerIT extends BaseIntegrationTest {
 
     @Autowired
     private PaymentCardService paymentCardService;
+
+    @Autowired
+    private PaymentCardRepository paymentCardRepository;
 
     @Autowired
     private JsonMapper jsonMapper;
@@ -62,7 +67,7 @@ public class UserCardPaymentControllerIT extends BaseIntegrationTest {
                 .generate(field(User::getEmail), gen -> gen.text().pattern("#c#c#c#c#c#c#c#c@domain.com"))
                 .set(field(User::getActive), true)
                 .set(field(User::getCards), new ArrayList<>())
-                .ignore(field(User.class, "isNewEntity"))
+                .ignore(field(User::getVersion))
                 .create();
 
         user = userRepository.saveAndFlush(user);
@@ -169,6 +174,7 @@ public class UserCardPaymentControllerIT extends BaseIntegrationTest {
         @Test
         void getByIdShouldReturnPaymentCardProfileDto() {
             MvcTestResult result = mockMvcTester.get().uri(BASE_URL + "/{cardId}", card.id())
+                    .requestAttr("tokenUserId", user.getId())
                     .exchange();
 
             assertThat(result).hasStatusOk();
@@ -183,8 +189,44 @@ public class UserCardPaymentControllerIT extends BaseIntegrationTest {
             UUID invalidId = UUID.randomUUID();
 
             MvcTestResult result = mockMvcTester.get().uri(BASE_URL + "/{cardId}", invalidId)
+                    .requestAttr("tokenUserId", user.getId())
                     .exchange();
 
+            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        }
+    }
+
+    @Nested
+    class DeleteCardTest {
+
+        @Test
+        void deleteShouldHardDeleteCardButLeaveUserIntactWhenCardExists() {
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL + "/{cardId}", card.id())
+                            .requestAttr("tokenUserId", user.getId())
+                            .contentType(MediaType.APPLICATION_JSON));
+
+            assertThat(paymentCardRepository.existsById(card.id())).isFalse();
+            assertThat(userRepository.existsById(user.getId())).isTrue();
+            assertThat(result).hasStatus(HttpStatus.NO_CONTENT);
+        }
+
+        @Test
+        void deleteShouldReturnNotFoundWhenCardDoesNotExist() {
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL + "/{cardId}", UUID.randomUUID())
+                            .requestAttr("tokenUserId", user.getId())
+                            .contentType(MediaType.APPLICATION_JSON));
+
+            assertThat(userRepository.existsById(user.getId())).isTrue();
+            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        }
+
+        @Test
+        void deleteShouldReturnNotFoundWhenUserIsNotOwnerOfCard() {
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL + "/{cardId}", card.id())
+                            .requestAttr("tokenUserId", UUID.randomUUID())
+                            .contentType(MediaType.APPLICATION_JSON));
+
+            assertThat(paymentCardRepository.existsById(card.id())).isTrue();
             assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
         }
     }
@@ -195,6 +237,7 @@ public class UserCardPaymentControllerIT extends BaseIntegrationTest {
         @Test
         void deactivateShouldReturnPaymentCardProfileDtoWithActiveFalse() {
             MvcTestResult result = mockMvcTester.post().uri(BASE_URL + "/{cardId}/deactivate", card.id())
+                    .requestAttr("tokenUserId", user.getId())
                     .exchange();
 
             assertThat(result).hasStatusOk();
@@ -208,6 +251,7 @@ public class UserCardPaymentControllerIT extends BaseIntegrationTest {
             UUID nonExistentCardId = UUID.randomUUID();
 
             MvcTestResult result = mockMvcTester.post().uri(BASE_URL + "/{cardId}/deactivate", nonExistentCardId)
+                    .requestAttr("tokenUserId", user.getId())
                     .exchange();
 
             assertThat(result).hasStatus(HttpStatus.NOT_FOUND);

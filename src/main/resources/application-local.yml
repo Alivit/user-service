@@ -1,4 +1,8 @@
 spring:
+  datasource:
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
   jpa:
     show-sql: true
     properties:
@@ -8,7 +12,28 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+decorator:
+  datasource:
+    p6spy:
+      enable-logging: false
+    datasource-proxy:
+      logging: slf4j
+      multiline: true
+      query:
+        enable-logging: true
+        log-level: info
+      slow-query:
+        enable-logging: true
+        log-level: warn
 logging:
   level:
     com.minispring.userservice: DEBUG
     org.hibernate.SQL: DEBUG
+    org.zalando.logbook: TRACE
+app:
+  cache:
+    lifecycle:
+      default: ${CACHE_DEFAULT:1h}
+      user-info: ${CACHE_USER_INFO:24h}
+  audit:
+    enabled: ${APP_AUDIT_ENABLED:false}

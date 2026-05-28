@@ -1,24 +1,25 @@
 package com.minispring.userservice.config;
 
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.cache.CacheManager;
+import org.springframework.boot.cache.autoconfigure.RedisCacheManagerBuilderCustomizer;
 import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.cache.transaction.TransactionAwareCacheManagerProxy;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
-import org.springframework.data.redis.cache.RedisCacheManager;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
 import org.springframework.data.redis.serializer.GenericJacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 import org.springframework.data.redis.serializer.RedisSerializer;
+import org.springframework.scheduling.annotation.EnableAsync;
+import tools.jackson.databind.DefaultTyping;
+import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
+import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
 
 import java.time.Duration;
-import java.util.HashMap;
-import java.util.Map;
 
 @Configuration
 @EnableCaching
+@EnableAsync
 public class RedisConfig {
 
     @Value("${app.cache.lifecycle.default:1h}")
@@ -27,33 +28,38 @@ public class RedisConfig {
     @Value("${app.cache.lifecycle.user-info:24h}")
     private Duration userInfo;
 
-    @Value("${app.cache.lifecycle.card-info:6h}")
-    private Duration cardInfo;
-
-    @Value("${app.cache.lifecycle.user-cards:12h}")
-    private Duration userCards;
-
     @Bean
-    public CacheManager cacheManager(RedisConnectionFactory redisConnectionFactory){
-        GenericJacksonJsonRedisSerializer jsonSerializer = GenericJacksonJsonRedisSerializer.builder()
-                .enableUnsafeDefaultTyping()
+    public RedisCacheConfiguration defaultCacheConfiguration() {
+        PolymorphicTypeValidator ptv = BasicPolymorphicTypeValidator.builder()
+                .allowIfBaseType("com.minispring.userservice.dto")
+                .allowIfBaseType("java.util")
+                .allowIfBaseType("java.lang")
+                .allowIfBaseType("java.time")
                 .build();
 
-        RedisCacheConfiguration redisConfig = RedisCacheConfiguration.defaultCacheConfig()
+        GenericJacksonJsonRedisSerializer jsonSerializer = GenericJacksonJsonRedisSerializer.builder()
+                .customize(builder -> builder
+                        .findAndAddModules()
+                        .activateDefaultTyping(
+                                ptv,
+                                DefaultTyping.NON_FINAL_AND_RECORDS,
+                                JsonTypeInfo.As.PROPERTY
+                        )
+                )
+                .build();
+
+        return RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(defaultValue)
                 .disableCachingNullValues()
                 .serializeKeysWith(RedisSerializationContext.SerializationPair.fromSerializer(RedisSerializer.string()))
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(jsonSerializer));
-        Map<String, RedisCacheConfiguration> cacheStorage = new HashMap<>();
-        cacheStorage.put("user_info", redisConfig.entryTtl(userInfo));
-        cacheStorage.put("card_info", redisConfig.entryTtl(cardInfo));
-        cacheStorage.put("user_cards", redisConfig.entryTtl(userCards));
-        RedisCacheManager redisCacheManager = RedisCacheManager.builder(redisConnectionFactory)
-                .cacheDefaults(redisConfig)
-                .withInitialCacheConfigurations(cacheStorage)
-                .build();
+    }
 
-        return new TransactionAwareCacheManagerProxy(redisCacheManager);
+    @Bean
+    public RedisCacheManagerBuilderCustomizer redisCacheManagerBuilderCustomizer(RedisCacheConfiguration defaultCacheConfig) {
+        return (builder) -> builder
+                .transactionAware()
+                .withCacheConfiguration("user_info", defaultCacheConfig.entryTtl(userInfo));
     }
 
 }

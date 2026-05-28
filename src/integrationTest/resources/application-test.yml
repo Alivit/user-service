@@ -22,6 +22,14 @@ spring:
     change-log: db/changelog/changelog.yml
     default-schema: public
 
+  task:
+    execution:
+      pool:
+        core-size: 0
+        max-size: 1
+        queue-capacity: 0
+      thread-name-prefix: test-sync-task-
+
   data:
     redis:
       host: localhost
@@ -40,5 +48,5 @@ app:
     lifecycle:
       default: 1m
       user-info: 5m
-      card-info: 5m
-      user-cards: 5m
+  audit:
+    enabled: ${APP_AUDIT_ENABLED:true}

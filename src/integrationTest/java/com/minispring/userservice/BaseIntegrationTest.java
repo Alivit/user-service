@@ -4,36 +4,39 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.testcontainers.postgresql.PostgreSQLContainer;
-import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.DockerImageName;
 
-@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+@Testcontainers
+@SpringBootTest(
+        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
+)
 @ActiveProfiles("test")
-public class BaseIntegrationTest {
+public abstract class BaseIntegrationTest {
 
-    protected static final PostgreSQLContainer postgres =
-            new PostgreSQLContainer(DockerImageName.parse("postgres:16-alpine"))
-                    .withDatabaseName("user_service_test")
-                    .withUsername("test")
-                    .withPassword("test");
+    @Container
+    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
+            DockerImageName.parse("postgres:16-alpine"))
+            .withDatabaseName("user_service_test")
+            .withUsername("test")
+            .withPassword("test")
+            .withReuse(true);
 
-    protected static final GenericContainer<?> redis =
-            new GenericContainer<>(DockerImageName.parse("redis:7-alpine"))
-                    .withExposedPorts(6379);
-
-    static {
-        postgres.start();
-        redis.start();
-    }
+    @Container
+    static final GenericContainer<?> REDIS = new GenericContainer<>(
+            DockerImageName.parse("redis:7.4-alpine"))
+            .withExposedPorts(6379)
+            .withReuse(true);
 
     @DynamicPropertySource
-    static void configureProperties(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-
-        registry.add("spring.data.redis.host", redis::getHost);
-        registry.add("spring.data.redis.port", () -> redis.getMappedPort(6379));
+    static void configure(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES::getUsername);
+        registry.add("spring.datasource.password", POSTGRES::getPassword);
+        registry.add("spring.data.redis.host", REDIS::getHost);
+        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
     }
 }

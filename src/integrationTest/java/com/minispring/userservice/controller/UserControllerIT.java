@@ -14,6 +14,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import tools.jackson.databind.json.JsonMapper;
@@ -24,6 +25,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.instancio.Select.field;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
 @AutoConfigureMockMvc
 public class UserControllerIT extends BaseIntegrationTest {
@@ -37,6 +39,9 @@ public class UserControllerIT extends BaseIntegrationTest {
     @Autowired
     private JsonMapper jsonMapper;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     private static final String BASE_URL = "/api/v1/users";
     private User user;
 
@@ -49,7 +54,7 @@ public class UserControllerIT extends BaseIntegrationTest {
                 .generate(field(User::getEmail), gen -> gen.text().pattern("#c#c#c#c#c#c#c#c@domain.com"))
                 .set(field(User::getActive), true)
                 .set(field(User::getCards), new ArrayList<>())
-                .ignore(field(User.class, "isNewEntity"))
+                .ignore(field(User::getVersion))
                 .create();
 
         user = userRepository.saveAndFlush(user);
@@ -68,7 +73,6 @@ public class UserControllerIT extends BaseIntegrationTest {
             UserCreateDto createDto = Instancio.of(UserCreateDto.class)
                     .generate(field(UserCreateDto::email), gen -> gen.text().pattern("#c#c#c#c#c@domain.com"))
                     .set(field(UserCreateDto::birthDate), LocalDate.now().minusYears(20))
-                    .set(field(UserCreateDto::cards), new ArrayList<>())
                     .create();
 
             MvcTestResult result = mockMvcTester.post().uri(BASE_URL)
@@ -190,6 +194,43 @@ public class UserControllerIT extends BaseIntegrationTest {
                     .content(jsonMapper.writeValueAsString(updateDto))
                     .exchange();
 
+            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        }
+    }
+
+    @Nested
+    class DeleteUserTest {
+
+        @Test
+        void deleteShouldReturnNoContentAndPermanentlyDeleteUserWhenUserExists() {
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL)
+                    .requestAttr("tokenUserId", user.getId()));
+
+            assertThat(userRepository.existsById(user.getId())).isFalse();
+
+            Boolean deleted = jdbcTemplate.queryForObject(
+                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.getId()
+            );
+
+            assertThat(deleted).isTrue();
+            assertThat(result).hasStatus(HttpStatus.NO_CONTENT);
+        }
+
+        @Test
+        void deleteShouldReturnNotFoundWhenUserDoesNotExist() {
+            UUID nonExistingUserId = UUID.randomUUID();
+
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL)
+                            .requestAttr("tokenUserId", nonExistingUserId)
+                            .contentType(MediaType.APPLICATION_JSON));
+
+            assertThat(userRepository.existsById(user.getId())).isTrue();
+
+            Boolean deleted = jdbcTemplate.queryForObject(
+                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.getId()
+            );
+
+            assertThat(deleted).isFalse();
             assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
         }
     }

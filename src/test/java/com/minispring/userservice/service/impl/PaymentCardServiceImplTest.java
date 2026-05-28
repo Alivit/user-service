@@ -1,6 +1,8 @@
 package com.minispring.userservice.service.impl;
 
 import ch.qos.logback.classic.Logger;
+import com.minispring.userservice.config.JaversConfig;
+import com.minispring.userservice.config.JaversConfig.AuditProperties;
 import com.minispring.userservice.dto.PaymentCardCreateDto;
 import com.minispring.userservice.dto.PaymentCardProfileDto;
 import com.minispring.userservice.dto.PaymentCardUpdateDto;
@@ -11,7 +13,8 @@ import com.minispring.userservice.mapper.PaymentCardMapper;
 import com.minispring.userservice.model.PaymentCard;
 import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.PaymentCardRepository;
-import com.minispring.userservice.service.UserService;
+import com.minispring.userservice.repository.UserRepository;
+import com.minispring.userservice.service.listener.AuditUpdateEvent;
 import org.instancio.Instancio;
 import org.javers.core.Javers;
 import org.javers.core.JaversBuilder;
@@ -26,6 +29,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
@@ -43,6 +50,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.instancio.Select.field;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -56,14 +64,33 @@ public class PaymentCardServiceImplTest {
     @Mock
     private PaymentCardMapper paymentCardMapper;
 
+    @Mock
+    private CacheManager cacheManager;
+
+    @Mock
+    private Cache cache;
+
     @Spy
     private final Javers javers = JaversBuilder.javers().build();
+
+    @Spy
+    private AuditProperties auditProperties = new AuditProperties();
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private PaymentCardServiceImpl paymentCardService;
 
     @Mock
-    private UserService userService;
+    private UserRepository userRepository;
+
+    @BeforeEach
+    void setUpGlobal() {
+        lenient().when(cacheManager.getCache("user_info")).thenReturn(cache);
+        auditProperties = new JaversConfig.AuditProperties();
+        auditProperties.setEnabled(true);
+    }
 
     @Nested
     class CreateTest {
@@ -72,6 +99,7 @@ public class PaymentCardServiceImplTest {
         private PaymentCardCreateDto createDto;
         private PaymentCard paymentCard;
         private PaymentCardProfileDto expectedDto;
+        private User user;
 
         @BeforeEach
         public void init() {
@@ -79,18 +107,15 @@ public class PaymentCardServiceImplTest {
             createDto = Instancio.create(PaymentCardCreateDto.class);
             paymentCard = Instancio.create(PaymentCard.class);
             expectedDto = Instancio.create(PaymentCardProfileDto.class);
+            user = Instancio.create(User.class);
         }
 
         @Test
         void createShouldReturnPaymentCardProfileDto() {
-            User userReference = Instancio.of(User.class)
-                    .set(field(User::getId), userId)
-                    .create();
-
+            given(userRepository.findUserForUpdateById(userId)).willReturn(Optional.of(user));
             given(paymentCardRepository.countByUserId(userId)).willReturn(4L);
             given(paymentCardMapper.paymentCardCreateDtoToPaymentCard(createDto)).willReturn(paymentCard);
-            given(paymentCardRepository.existsByNumber(paymentCard.getNumber())).willReturn(false);
-            given(userService.getExistingUser(userId)).willReturn(userReference);
+            given(userRepository.getReferenceById(userId)).willReturn(user);
             given(paymentCardRepository.saveAndFlush(paymentCard)).willReturn(paymentCard);
             given(paymentCardMapper.paymentCardToPaymentCardProfileDto(paymentCard)).willReturn(expectedDto);
 
@@ -102,44 +127,49 @@ public class PaymentCardServiceImplTest {
 
         @Test
         void createShouldThrowBadRequestExceptionWhenLimitIsExceeded() {
+            given(userRepository.findUserForUpdateById(userId)).willReturn(Optional.of(user));
             given(paymentCardRepository.countByUserId(userId)).willReturn(5L);
 
             assertThatThrownBy(() -> paymentCardService.create(userId, createDto))
                     .isInstanceOf(BadRequestException.class)
                     .hasMessage(CARD_LIMIT);
 
-            verifyNoInteractions(paymentCardMapper, userService);
-        }
-
-        @Test
-        void createShouldThrowResourceNotFoundException() {
-            given(paymentCardRepository.countByUserId(userId)).willReturn(2L);
-            given(paymentCardMapper.paymentCardCreateDtoToPaymentCard(createDto)).willReturn(paymentCard);
-            given(paymentCardRepository.existsByNumber(paymentCard.getNumber())).willReturn(true);
-
-            assertThatThrownBy(() -> paymentCardService.create(userId, createDto))
-                    .isInstanceOf(ResourceAlreadyExistsException.class);
-
-            verifyNoInteractions(userService);
+            verifyNoInteractions(paymentCardMapper);
             verify(paymentCardRepository, never()).saveAndFlush(any());
         }
 
         @Test
-        void createShouldThrowResourceNotFoundExceptionWhenUserNotFound() {
+        void createShouldThrowResourceAlreadyExistsExceptionWhenCardNumberAlreadyExists() {
+            given(userRepository.findUserForUpdateById(userId)).willReturn(Optional.of(user));
             given(paymentCardRepository.countByUserId(userId)).willReturn(2L);
             given(paymentCardMapper.paymentCardCreateDtoToPaymentCard(createDto)).willReturn(paymentCard);
-            given(paymentCardRepository.existsByNumber(paymentCard.getNumber())).willReturn(false);
-            given(userService.getExistingUser(userId)).willThrow(new ResourceNotFoundException(String.format(USER_NOT_FOUND, userId)));
+            given(userRepository.getReferenceById(userId)).willReturn(user);
+
+            given(paymentCardRepository.saveAndFlush(paymentCard))
+                    .willThrow(new DataIntegrityViolationException("Duplicate key value violates unique constraint"));
 
             assertThatThrownBy(() -> paymentCardService.create(userId, createDto))
-                    .isInstanceOf(ResourceNotFoundException.class);
+                    .isInstanceOf(ResourceAlreadyExistsException.class);
 
+            verify(paymentCardMapper, never()).paymentCardToPaymentCardProfileDto(any());
+        }
+
+        @Test
+        void createShouldThrowResourceNotFoundExceptionWhenUserNotFound() {
+            given(userRepository.findUserForUpdateById(userId)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> paymentCardService.create(userId, createDto))
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage(String.format(USER_NOT_FOUND, userId));
+
+            verify(paymentCardRepository, never()).countByUserId(any());
+            verifyNoInteractions(paymentCardMapper);
             verify(paymentCardRepository, never()).saveAndFlush(any());
         }
     }
 
     @Nested
-    class GetByIdTest {
+    class GetByCardIdTest {
 
         @Test
         void getByIdShouldReturnPaymentCardProfileDto() {
@@ -149,23 +179,72 @@ public class PaymentCardServiceImplTest {
                     .set(field(PaymentCardProfileDto::id), cardId)
                     .create();
 
-            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(paymentCard));
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(paymentCard));
             given(paymentCardMapper.paymentCardToPaymentCardProfileDto(paymentCard)).willReturn(expectedDto);
 
             PaymentCardProfileDto result = paymentCardService.getById(cardId);
 
-            assertThat(result)
-                    .isNotNull()
-                    .isEqualTo(expectedDto);
+            assertThat(result).isNotNull().isEqualTo(expectedDto);
         }
 
         @Test
-        void getByIdShouldThrowResourceNotFoundException() {
+        void getByIdShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
             UUID cardId = Instancio.create(UUID.class);
 
-            given(paymentCardRepository.findById(cardId)).willReturn(Optional.empty());
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> paymentCardService.getById(cardId))
+                    .isInstanceOf(ResourceNotFoundException.class);
+
+            verifyNoInteractions(paymentCardMapper);
+        }
+    }
+
+    @Nested
+    class GetByCardIdWithUserIdTest {
+
+        @Test
+        void getByIdShouldReturnPaymentCardProfileDtoWhenUserOwnsCard() {
+            UUID userId = Instancio.create(UUID.class);
+            User user = Instancio.of(User.class).set(field(User::getId), userId).create();
+            PaymentCard paymentCard = Instancio.of(PaymentCard.class).set(field(PaymentCard::getUser), user).create();
+            UUID cardId = paymentCard.getId();
+            PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
+                    .set(field(PaymentCardProfileDto::id), cardId)
+                    .create();
+
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(paymentCard));
+            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(paymentCard)).willReturn(expectedDto);
+
+            PaymentCardProfileDto result = paymentCardService.getById(userId, cardId);
+
+            assertThat(result).isNotNull().isEqualTo(expectedDto);
+        }
+
+        @Test
+        void getByIdShouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
+            UUID authUserId = Instancio.create(UUID.class);
+            UUID cardOwnerId = Instancio.create(UUID.class);
+            User cardOwner = Instancio.of(User.class).set(field(User::getId), cardOwnerId).create();
+            PaymentCard paymentCard = Instancio.of(PaymentCard.class).set(field(PaymentCard::getUser), cardOwner).create();
+            UUID cardId = paymentCard.getId();
+
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(paymentCard));
+
+            assertThatThrownBy(() -> paymentCardService.getById(authUserId, cardId))
+                    .isInstanceOf(ResourceNotFoundException.class);
+
+            verifyNoInteractions(paymentCardMapper);
+        }
+
+        @Test
+        void getByIdShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
+            UUID userId = Instancio.create(UUID.class);
+            UUID cardId = Instancio.create(UUID.class);
+
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> paymentCardService.getById(userId, cardId))
                     .isInstanceOf(ResourceNotFoundException.class);
 
             verifyNoInteractions(paymentCardMapper);
@@ -182,7 +261,7 @@ public class PaymentCardServiceImplTest {
             List<PaymentCardProfileDto> expectedList = Instancio.ofList(PaymentCardProfileDto.class).size(2).create();
             Page<PaymentCard> cardPage = new PageImpl<>(cards, pageable, cards.size());
 
-            given(paymentCardRepository.findAll(pageable)).willReturn(cardPage);
+            given(paymentCardRepository.findAllCardsWithPageable(pageable)).willReturn(cardPage);
             given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(0))).willReturn(expectedList.get(0));
             given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(1))).willReturn(expectedList.get(1));
 
@@ -190,7 +269,6 @@ public class PaymentCardServiceImplTest {
 
             assertThat(result).isNotNull();
             assertThat(result.getTotalElements()).isEqualTo(2);
-
             assertThat(result.getContent()).containsExactlyElementsOf(expectedList);
         }
 
@@ -198,13 +276,13 @@ public class PaymentCardServiceImplTest {
         void getAllByShouldReturnEmptyPageWhenNoCardsExist() {
             Pageable pageable = PageRequest.of(0, 10);
             Page<PaymentCard> emptyCardPage = Page.empty(pageable);
-            given(paymentCardRepository.findAll(pageable)).willReturn(emptyCardPage);
+
+            given(paymentCardRepository.findAllCardsWithPageable(pageable)).willReturn(emptyCardPage);
 
             Page<PaymentCardProfileDto> result = paymentCardService.getAllBy(pageable);
 
             assertThat(result).isNotNull().isEmpty();
             assertThat(result.getTotalElements()).isZero();
-
             verifyNoInteractions(paymentCardMapper);
         }
     }
@@ -218,7 +296,7 @@ public class PaymentCardServiceImplTest {
             List<PaymentCard> cards = Instancio.ofList(PaymentCard.class).size(3).create();
             List<PaymentCardProfileDto> expectedList = Instancio.ofList(PaymentCardProfileDto.class).size(3).create();
 
-            given(paymentCardRepository.findAllByUserId(userId)).willReturn(cards);
+            given(paymentCardRepository.findAllCardsByUserId(userId)).willReturn(cards);
             given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(0))).willReturn(expectedList.get(0));
             given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(1))).willReturn(expectedList.get(1));
             given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(2))).willReturn(expectedList.get(2));
@@ -235,7 +313,7 @@ public class PaymentCardServiceImplTest {
         void getAllShouldReturnEmptyListWhenUserHasNoCards() {
             UUID userId = Instancio.create(UUID.class);
 
-            given(paymentCardRepository.findAllByUserId(userId)).willReturn(List.of());
+            given(paymentCardRepository.findAllCardsByUserId(userId)).willReturn(List.of());
 
             List<PaymentCardProfileDto> result = paymentCardService.getAll(userId);
 
@@ -261,7 +339,12 @@ public class PaymentCardServiceImplTest {
             Logger logger = (Logger) LoggerFactory.getLogger(PaymentCardServiceImpl.class);
             logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
             cardId = Instancio.create(UUID.class);
-            existingCard = Instancio.create(PaymentCard.class);
+
+            User user = Instancio.create(User.class);
+            existingCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), user)
+                    .create();
+
             expectedDto = Instancio.create(PaymentCardProfileDto.class);
             cardStateBefore = Instancio.of(PaymentCardUpdateDto.class)
                     .set(field(PaymentCardUpdateDto::active), true)
@@ -280,12 +363,9 @@ public class PaymentCardServiceImplTest {
             PaymentCardProfileDto result = paymentCardService.update(cardId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'number' changed:")
-                    .contains("-> '" + testNumber + "'");
             verify(paymentCardMapper).updateCardFromDto(updateDto, existingCard);
             verify(paymentCardRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -300,12 +380,9 @@ public class PaymentCardServiceImplTest {
             PaymentCardProfileDto result = paymentCardService.update(cardId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'holder' changed:")
-                    .contains("-> '" + testHolder + "'");
             verify(paymentCardMapper).updateCardFromDto(updateDto, existingCard);
             verify(paymentCardRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -321,11 +398,7 @@ public class PaymentCardServiceImplTest {
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
             verify(paymentCardRepository).flush();
-
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'expirationDate' changed:")
-                    .contains("-> '" + testExpirationDate + "'");
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -341,11 +414,7 @@ public class PaymentCardServiceImplTest {
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
             verify(paymentCardRepository).flush();
-
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'active' changed:")
-                    .contains("-> '" + testActive + "'");
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -359,7 +428,7 @@ public class PaymentCardServiceImplTest {
             assertThat(result).isNotNull().isEqualTo(expectedDto);
             verify(paymentCardRepository).flush();
 
-            assertThat(output.getOut()).doesNotContain("have changes:");
+            assertThat(output.getOut()).doesNotContain("updated. Changes:");
         }
 
         @Test
@@ -378,7 +447,78 @@ public class PaymentCardServiceImplTest {
             given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(existingCard));
             given(paymentCardMapper.paymentCardToPaymentCardUpdateDto(existingCard))
                     .willReturn(cardStateBefore, cardStateAfter);
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(existingCard)).willReturn(expectedDto);
+            given(paymentCardMapper.CardToPaymentCardProfileDtoWithoutUser(existingCard)).willReturn(expectedDto);
+        }
+    }
+
+    @Nested
+    class DeleteTest {
+
+        @Test
+        void deleteShouldPermanentlyDeleteCardWhenCardExists() {
+            UUID cardId = UUID.randomUUID();
+            UUID userId = UUID.randomUUID();
+
+            given(paymentCardRepository.findUserIdByCardId(cardId)).willReturn(Optional.of(userId));
+            given(paymentCardRepository.deleteCardById(cardId)).willReturn(1);
+
+            paymentCardService.delete(cardId);
+
+            verify(paymentCardRepository).deleteCardById(cardId);
+        }
+
+        @Test
+        void deleteShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
+            UUID cardId = UUID.randomUUID();
+
+            given(paymentCardRepository.findUserIdByCardId(cardId)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> paymentCardService.delete(cardId))
+                    .isInstanceOf(ResourceNotFoundException.class);
+
+            verify(paymentCardRepository, never()).deleteCardById(any());
+        }
+    }
+
+    @Nested
+    class DeleteWithUserIdTest {
+
+        @Test
+        void deleteShouldPermanentlyDeleteCardWhenUserOwnsCard() {
+            UUID userId = UUID.randomUUID();
+            UUID cardId = UUID.randomUUID();
+
+            given(paymentCardRepository.deleteCardByIdAndUserId(cardId, userId)).willReturn(1);
+
+            paymentCardService.delete(userId, cardId);
+
+            verify(paymentCardRepository).deleteCardByIdAndUserId(cardId, userId);
+        }
+
+        @Test
+        void deleteShouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
+            UUID authUserId = UUID.randomUUID();
+            UUID cardId = UUID.randomUUID();
+
+            given(paymentCardRepository.deleteCardByIdAndUserId(cardId, authUserId)).willReturn(0);
+
+            assertThatThrownBy(() -> paymentCardService.delete(authUserId, cardId))
+                    .isInstanceOf(ResourceNotFoundException.class);
+
+            verify(paymentCardRepository, never()).delete(any(PaymentCard.class));
+        }
+
+        @Test
+        void deleteShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
+            UUID userId = UUID.randomUUID();
+            UUID cardId = UUID.randomUUID();
+
+            given(paymentCardRepository.deleteCardByIdAndUserId(cardId, userId)).willReturn(0);
+
+            assertThatThrownBy(() -> paymentCardService.delete(userId, cardId))
+                    .isInstanceOf(ResourceNotFoundException.class);
+
+            verify(paymentCardRepository, never()).delete(any(PaymentCard.class));
         }
     }
 
@@ -387,7 +527,11 @@ public class PaymentCardServiceImplTest {
 
         @Test
         void deactivateShouldReturnPaymentCardProfileDtoWithActiveFalse() {
-            PaymentCard existingCard = Instancio.of(PaymentCard.class).set(field(PaymentCard::getActive), true).create();
+            User user = Instancio.create(User.class);
+            PaymentCard existingCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), user)
+                    .set(field(PaymentCard::getActive), true)
+                    .create();
             UUID cardId = existingCard.getId();
             PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
                     .set(field(PaymentCardProfileDto::id), cardId)
@@ -395,19 +539,17 @@ public class PaymentCardServiceImplTest {
                     .create();
 
             given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(existingCard));
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(existingCard)).willReturn(expectedDto);
+            given(paymentCardMapper.CardToPaymentCardProfileDtoWithoutUser(existingCard)).willReturn(expectedDto);
 
             PaymentCardProfileDto result = paymentCardService.deactivate(cardId);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
             assertThat(result.active()).isFalse();
             assertThat(existingCard.getActive()).isFalse();
-
-            verify(paymentCardRepository).flush();
         }
 
         @Test
-        void deactivateShouldThrowResourceNotFoundException() {
+        void deactivateShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
             UUID cardId = Instancio.create(UUID.class);
 
             given(paymentCardRepository.findById(cardId)).willReturn(Optional.empty());
@@ -421,11 +563,74 @@ public class PaymentCardServiceImplTest {
     }
 
     @Nested
+    class DeactivateWithUserIdTest {
+
+        @Test
+        void deactivateShouldReturnPaymentCardProfileDtoWithActiveFalseWhenUserOwnsCard() {
+            UUID userId = Instancio.create(UUID.class);
+            User user = Instancio.of(User.class).set(field(User::getId), userId).create();
+            PaymentCard existingCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), user)
+                    .set(field(PaymentCard::getActive), true)
+                    .create();
+            UUID cardId = existingCard.getId();
+            PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
+                    .set(field(PaymentCardProfileDto::id), cardId)
+                    .set(field(PaymentCardProfileDto::active), false)
+                    .create();
+
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(existingCard));
+            given(paymentCardMapper.CardToPaymentCardProfileDtoWithoutUser(existingCard)).willReturn(expectedDto);
+
+            PaymentCardProfileDto result = paymentCardService.deactivate(userId, cardId);
+
+            assertThat(result).isNotNull().isEqualTo(expectedDto);
+            assertThat(result.active()).isFalse();
+            assertThat(existingCard.getActive()).isFalse();
+        }
+
+        @Test
+        void deactivateShouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
+            UUID authUserId = Instancio.create(UUID.class);
+            UUID cardOwnerId = Instancio.create(UUID.class);
+            User cardOwner = Instancio.of(User.class).set(field(User::getId), cardOwnerId).create();
+            PaymentCard existingCard = Instancio.of(PaymentCard.class).set(field(PaymentCard::getUser), cardOwner).create();
+            UUID cardId = existingCard.getId();
+
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(existingCard));
+
+            assertThatThrownBy(() -> paymentCardService.deactivate(authUserId, cardId))
+                    .isInstanceOf(ResourceNotFoundException.class);
+
+            verify(paymentCardRepository, never()).flush();
+            verifyNoInteractions(paymentCardMapper);
+        }
+
+        @Test
+        void deactivateShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
+            UUID userId = Instancio.create(UUID.class);
+            UUID cardId = Instancio.create(UUID.class);
+
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> paymentCardService.deactivate(userId, cardId))
+                    .isInstanceOf(ResourceNotFoundException.class);
+
+            verify(paymentCardRepository, never()).flush();
+            verifyNoInteractions(paymentCardMapper);
+        }
+    }
+
+    @Nested
     class ActivateTest {
 
         @Test
         void activateShouldReturnPaymentCardProfileDtoWithActiveTrue() {
-            PaymentCard existingCard = Instancio.of(PaymentCard.class).set(field(PaymentCard::getActive), false).create();
+            User user = Instancio.create(User.class);
+            PaymentCard existingCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), user)
+                    .set(field(PaymentCard::getActive), false)
+                    .create();
             UUID cardId = existingCard.getId();
             PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
                     .set(field(PaymentCardProfileDto::id), cardId)
@@ -433,20 +638,19 @@ public class PaymentCardServiceImplTest {
                     .create();
 
             given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(existingCard));
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(existingCard)).willReturn(expectedDto);
+            given(paymentCardMapper.CardToPaymentCardProfileDtoWithoutUser(existingCard)).willReturn(expectedDto);
 
             PaymentCardProfileDto result = paymentCardService.activate(cardId);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
             assertThat(result.active()).isTrue();
             assertThat(existingCard.getActive()).isTrue();
-
-            verify(paymentCardRepository).flush();
         }
 
         @Test
         void activateShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
             UUID cardId = Instancio.create(UUID.class);
+
             given(paymentCardRepository.findById(cardId)).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> paymentCardService.activate(cardId))

@@ -12,6 +12,12 @@ databaseChangeLog:
                   constraints:
                     primaryKey: true
               - column:
+                  name: version
+                  type: bigint
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+              - column:
                   name: user_id
                   type: uuid
                   constraints:

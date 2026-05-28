@@ -37,15 +37,6 @@ public record UserCreateDto(
 
         @Email
         @NotBlank
-        String email,
-
-        @Size(max = 5, message = CARD_LIMIT)
-        List<@Valid PaymentCardCreateDto> cards
+        String email
 ) {
-
-    public UserCreateDto {
-        if (cards == null) {
-            cards = List.of();
-        }
-    }
 }
