@@ -15,6 +15,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.javers.core.Javers;
 import org.javers.core.diff.Diff;
+import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.annotation.Cacheable;
+import org.springframework.cache.annotation.Caching;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -40,6 +43,7 @@ public class PaymentCardServiceImpl implements PaymentCardService {
 
     @Override
     @Transactional
+    @CacheEvict(value = "user_cards", key = "#userId")
     public PaymentCardProfileDto create(UUID userId, PaymentCardCreateDto paymentCardCreateDto) {
         if (paymentCardRepository.countByUserId(userId) >= 5) {
             throw new BadRequestException(CARD_LIMIT);
@@ -55,6 +59,7 @@ public class PaymentCardServiceImpl implements PaymentCardService {
     }
 
     @Override
+    @Cacheable(value = "card_info", key = "#cardId")
     public PaymentCardProfileDto getById(UUID cardId) {
         PaymentCard foundedCard = getExistingCard(cardId);
         log.debug("Payment card with id {} has been found", cardId);
@@ -68,6 +73,7 @@ public class PaymentCardServiceImpl implements PaymentCardService {
     }
 
     @Override
+    @Cacheable(value = "user_cards", key = "#userId")
     public List<PaymentCardProfileDto> getAll(UUID userId) {
         return paymentCardRepository.findAllByUserId(userId).stream()
                 .map(paymentCardMapper::paymentCardToPaymentCardProfileDto).toList();
@@ -75,6 +81,10 @@ public class PaymentCardServiceImpl implements PaymentCardService {
 
     @Override
     @Transactional
+    @Caching(evict = {
+            @CacheEvict(value = "card_info", key = "#cardId"),
+            @CacheEvict(value = "user_cards", key = "#result.user.id")
+    })
     public PaymentCardProfileDto update(UUID cardId, PaymentCardUpdateDto paymentCardUpdateDto) {
         PaymentCard existingCard = getExistingCard(cardId);
         PaymentCardUpdateDto cardStateBefore = paymentCardMapper.paymentCardToPaymentCardUpdateDto(existingCard);
@@ -91,6 +101,10 @@ public class PaymentCardServiceImpl implements PaymentCardService {
 
     @Override
     @Transactional
+    @Caching(evict = {
+            @CacheEvict(value = "card_info", key = "#cardId"),
+            @CacheEvict(value = "user_cards", key = "#result.user.id")
+    })
     public PaymentCardProfileDto deactivate(UUID cardId) {
         PaymentCard existingCard = getExistingCard(cardId);
         existingCard.setActive(false);
@@ -101,6 +115,10 @@ public class PaymentCardServiceImpl implements PaymentCardService {
 
     @Override
     @Transactional
+    @Caching(evict = {
+            @CacheEvict(value = "card_info", key = "#cardId"),
+            @CacheEvict(value = "user_cards", key = "#result.user.id")
+    })
     public PaymentCardProfileDto activate(UUID cardId) {
         PaymentCard existingCard = getExistingCard(cardId);
         existingCard.setActive(true);

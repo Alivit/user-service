@@ -26,6 +26,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'net.lbruun.springboot:preliquibase-spring-boot-starter:2.0.0'
+    implementation 'org.apache.commons:commons-pool2'
     implementation 'org.javers:javers-core:7.4.2'
     implementation 'org.mapstruct:mapstruct:1.6.3'
     compileOnly 'org.projectlombok:lombok'
