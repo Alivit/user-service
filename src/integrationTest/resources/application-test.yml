@@ -1,0 +1,44 @@
+spring:
+  application:
+    name: user-service-test
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/user_service_test
+    username: test
+    password: test
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+        default_schema: public
+    open-in-view: false
+
+  liquibase:
+    enabled: true
+    change-log: db/changelog/changelog.yml
+    default-schema: public
+
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      timeout: 1000ms
+      lettuce:
+        pool:
+          enabled: true
+          max-active: 8
+          max-idle: 4
+          min-idle: 2
+          max-wait: 500ms
+
+app:
+  cache:
+    lifecycle:
+      default: 1m
+      user-info: 5m
+      card-info: 5m
+      user-cards: 5m

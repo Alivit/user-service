@@ -2,9 +2,6 @@ package com.minispring.userservice.repository;
 
 import com.minispring.userservice.dto.UserParamsDto;
 import com.minispring.userservice.model.User;
-import jakarta.validation.constraints.Email;
-import jakarta.validation.constraints.NotBlank;
-import liquibase.util.StringUtil;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;

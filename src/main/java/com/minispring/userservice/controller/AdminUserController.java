@@ -3,10 +3,8 @@ package com.minispring.userservice.controller;
 import com.minispring.userservice.dto.AdminUserUpdateDto;
 import com.minispring.userservice.dto.PaymentCardCreateDto;
 import com.minispring.userservice.dto.PaymentCardProfileDto;
-import com.minispring.userservice.dto.UserCreateDto;
 import com.minispring.userservice.dto.UserParamsDto;
 import com.minispring.userservice.dto.UserProfileDto;
-import com.minispring.userservice.dto.UserUpdateDto;
 import com.minispring.userservice.service.PaymentCardService;
 import com.minispring.userservice.service.UserService;
 import jakarta.validation.Valid;
@@ -42,17 +40,6 @@ public class AdminUserController {
                                                         @Valid @RequestBody PaymentCardCreateDto dto
     ) {
         PaymentCardProfileDto response = paymentCardService.create(userId, dto);
-        URI location = ServletUriComponentsBuilder
-                .fromCurrentRequest()
-                .path("/{id}")
-                .buildAndExpand(response.id())
-                .toUri();
-        return ResponseEntity.created(location).body(response);
-    }
-
-    @PostMapping
-    public ResponseEntity<UserProfileDto> create(@Valid @RequestBody UserCreateDto dto) {
-        UserProfileDto response = userService.create(dto);
         URI location = ServletUriComponentsBuilder
                 .fromCurrentRequest()
                 .path("/{id}")

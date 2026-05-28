@@ -2,7 +2,6 @@ package com.minispring.userservice.dto;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.validation.Valid;
-import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Past;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -24,9 +23,6 @@ public record AdminUserUpdateDto(
         @Past(message = "The date of birth must be in the past")
         @JsonFormat(pattern = "yyyy-MM-dd")
         LocalDate birthDate,
-
-        @Email
-        String email,
 
         Boolean active,
 

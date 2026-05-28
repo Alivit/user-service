@@ -31,7 +31,6 @@ public interface PaymentCardMapper {
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     @Mapping(target = "holder", source = "holder", qualifiedByName = "UpperCaseModifier")
-    @Mapping(target = "number", ignore = true)
     void updateCardFromDto(PaymentCardUpdateDto dto, @MappingTarget PaymentCard paymentCard);
 
     @Named("UpperCaseModifier")

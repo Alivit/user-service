@@ -19,6 +19,18 @@ repositories {
     maven { url = 'https://repo.spring.io/snapshot' }
 }
 
+sourceSets {
+    integrationTest {
+        java.srcDir file('src/integrationTest/java')
+        resources.srcDir file('src/integrationTest/resources')
+        compileClasspath += sourceSets.main.output + sourceSets.test.output
+        runtimeClasspath += sourceSets.main.output + sourceSets.test.output
+    }
+}
+
+configurations.integrationTestImplementation.extendsFrom(configurations.testImplementation)
+configurations.integrationTestRuntimeOnly.extendsFrom(configurations.testRuntimeOnly)
+
 dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
     implementation 'org.springframework.boot:spring-boot-starter-data-redis'
@@ -26,6 +38,7 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-validation'
     implementation 'org.springframework.boot:spring-boot-starter-webmvc'
     implementation 'net.lbruun.springboot:preliquibase-spring-boot-starter:2.0.0'
+    implementation 'org.testcontainers:testcontainers-database-commons:2.0.5'
     implementation 'org.apache.commons:commons-pool2'
     implementation 'org.javers:javers-core:7.4.2'
     implementation 'org.mapstruct:mapstruct:1.6.3'
@@ -33,16 +46,39 @@ dependencies {
     runtimeOnly 'org.postgresql:postgresql'
     annotationProcessor 'org.projectlombok:lombok'
     annotationProcessor 'org.mapstruct:mapstruct-processor:1.6.3'
+    implementation platform('org.instancio:instancio-bom:6.0.0-RC2')
+    testImplementation 'org.instancio:instancio-core'
+    testImplementation 'org.instancio:instancio-junit'
+    testImplementation "org.testcontainers:testcontainers:2.0.5"
     testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-data-redis-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-liquibase-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
+    testImplementation 'org.testcontainers:testcontainers-postgresql:2.0.1'
+    integrationTestImplementation 'org.testcontainers:testcontainers-postgresql:2.0.1'
     testCompileOnly 'org.projectlombok:lombok'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testAnnotationProcessor 'org.projectlombok:lombok'
 }
 
+tasks.register('integrationTest', Test) {
+    description = 'Runs integration tests using Testcontainers.'
+    group = 'verification'
+
+    testClassesDirs = sourceSets.integrationTest.output.classesDirs
+    classpath = sourceSets.integrationTest.runtimeClasspath
+
+    useJUnitPlatform()
+    shouldRunAfter test
+}
+
+check.dependsOn integrationTest
+
 tasks.named('test') {
     useJUnitPlatform()
+}
+
+tasks.named('processIntegrationTestResources', Copy) {
+    duplicatesStrategy = DuplicatesStrategy.INCLUDE
 }
