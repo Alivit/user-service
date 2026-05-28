@@ -1,4 +1,6 @@
 spring:
+  profiles:
+    active: local
   application:
     name: user-service
   datasource:
@@ -23,8 +25,6 @@ spring:
       pageable:
         serialization-mode: via_dto
     redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
       timeout: ${REDIS_TIMEOUT:2000ms}
       lettuce:
         pool:
