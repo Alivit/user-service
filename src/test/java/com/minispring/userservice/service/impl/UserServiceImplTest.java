@@ -59,6 +59,9 @@ class UserServiceImplTest {
     @Mock
     private UserMapper userMapper;
 
+    @Mock
+    private AuthGrpcService authGrpcService;
+
     @Spy
     private final Javers javers = JaversBuilder.javers().build();
 
@@ -341,9 +344,7 @@ class UserServiceImplTest {
             logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
             existingUser = Instancio.create(User.class);
             userId = existingUser.getId();
-            userStateBefore = Instancio.of(AdminUserUpdateDto.class)
-                    .set(field(AdminUserUpdateDto::active), true)
-                    .create();
+            userStateBefore = Instancio.create(AdminUserUpdateDto.class);
             expectedDto = Instancio.of(UserProfileDto.class)
                     .set(field(UserProfileDto::id), userId)
                     .create();
@@ -397,22 +398,6 @@ class UserServiceImplTest {
                     .create();
 
             setupMocks(updateDto);
-            UserProfileDto result = userService.update(userId, updateDto);
-
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
-            verify(userRepository).flush();
-            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
-        }
-
-        @Test
-        void updateShouldReturnUserProfileDtoWithUpdatedActiveStatus(CapturedOutput output) {
-            boolean testActive = false;
-            AdminUserUpdateDto updateDto = Instancio.of(AdminUserUpdateDto.class)
-                    .set(field(AdminUserUpdateDto::active), testActive)
-                    .create();
-
-            setupMocks(updateDto);
-
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);

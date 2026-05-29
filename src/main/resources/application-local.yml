@@ -1,4 +1,7 @@
 spring:
+  config:
+    activate:
+      on-profile: local
   datasource:
     url: ${DATABASE_URL}
     username: ${DATABASE_USERNAME}
@@ -12,6 +15,16 @@ spring:
     redis:
       host: ${REDIS_HOST:localhost}
       port: ${REDIS_PORT:6379}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://localhost:8080/realms/dev/protocol/openid-connect/certs
+  grpc:
+    client:
+      channels:
+        auth-service:
+          address: static://localhost:9090
 decorator:
   datasource:
     p6spy:
@@ -25,6 +38,7 @@ decorator:
       slow-query:
         enable-logging: true
         log-level: warn
+
 logging:
   level:
     com.minispring.userservice: DEBUG

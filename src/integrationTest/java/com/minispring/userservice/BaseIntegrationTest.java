@@ -1,5 +1,6 @@
 package com.minispring.userservice;
 
+import com.minispring.userservice.security.SecurityConfig;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -11,14 +12,12 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
-@SpringBootTest(
-        webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT
-)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-public abstract class BaseIntegrationTest {
+public abstract class BaseIntegrationTest extends SecurityConfig {
 
     @Container
-    static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
+    protected static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
             DockerImageName.parse("postgres:16-alpine"))
             .withDatabaseName("user_service_test")
             .withUsername("test")
@@ -26,7 +25,7 @@ public abstract class BaseIntegrationTest {
             .withReuse(true);
 
     @Container
-    static final GenericContainer<?> REDIS = new GenericContainer<>(
+    protected static final GenericContainer<?> REDIS = new GenericContainer<>(
             DockerImageName.parse("redis:7.4-alpine"))
             .withExposedPorts(6379)
             .withReuse(true);

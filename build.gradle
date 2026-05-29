@@ -3,6 +3,7 @@ plugins {
     id 'org.springframework.boot' version '4.0.6'
     id 'io.spring.dependency-management' version '1.1.7'
     id 'org.sonarqube' version "7.3.0.8198"
+    id 'com.google.protobuf' version "0.10.0"
     id 'jacoco'
 }
 
@@ -56,6 +57,12 @@ dependencies {
     implementation 'org.springframework.boot:spring-boot-starter-web'
     implementation 'org.springframework.boot:spring-boot-starter-liquibase'
     implementation 'org.springframework.boot:spring-boot-starter-cache'
+    implementation 'org.springframework.boot:spring-boot-starter-webmvc'
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'org.springframework.boot:spring-boot-starter-oauth2-resource-server'
+    implementation 'org.springframework.grpc:spring-grpc-spring-boot-starter:1.0.3'
+    implementation 'com.google.protobuf:protobuf-java:4.35.0'
+    implementation 'com.google.protobuf:protobuf-java-util:4.35.0'
     implementation 'net.lbruun.springboot:preliquibase-spring-boot-starter:2.0.0'
     implementation 'org.apache.commons:commons-pool2'
     implementation 'org.zalando:logbook-spring-boot-starter:4.0.1'
@@ -77,6 +84,7 @@ dependencies {
     testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
     testImplementation 'org.testcontainers:testcontainers-postgresql'
     integrationTestImplementation 'org.testcontainers:testcontainers-postgresql'
+    testImplementation 'org.springframework.security:spring-security-test:7.0.5'
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
     testCompileOnly 'org.projectlombok:lombok'
     testAnnotationProcessor 'org.projectlombok:lombok'
@@ -111,4 +119,22 @@ tasks.named('processIntegrationTestResources', Copy) {
 
 tasks.named('sonar') {
     dependsOn jacocoTestReport
+}
+
+protobuf {
+    protoc {
+        artifact = "com.google.protobuf:protoc:4.35.0"
+    }
+    plugins {
+        grpc {
+            artifact = "io.grpc:protoc-gen-grpc-java:1.81.0"
+        }
+    }
+    generateProtoTasks {
+        all().each { task ->
+            task.plugins {
+                grpc {}
+            }
+        }
+    }
 }

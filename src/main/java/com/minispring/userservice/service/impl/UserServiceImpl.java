@@ -13,6 +13,7 @@ import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.UserRepository;
 import com.minispring.userservice.service.UserService;
 import com.minispring.userservice.service.listener.AuditUpdateEvent;
+import com.minispring.userservice.util.TransactionUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
@@ -38,6 +39,7 @@ public class UserServiceImpl implements UserService {
 
     private final ApplicationEventPublisher eventPublisher;
     private final AuditProperties auditProperties;
+    private final AuthGrpcService authGrpcService;
     private final UserRepository userRepository;
     private final UserMapper userMapper;
 
@@ -105,6 +107,7 @@ public class UserServiceImpl implements UserService {
         if (user.getActive()) {
             user.setActive(false);
             user.setUpdatedAt(Instant.now());
+            TransactionUtils.afterCommit(() -> authGrpcService.setStatus(userId, false));
             log.info("User ID: {} has been banned", userId);
         }
         return userMapper.userToUserProfileDtoWithoutCards(user);
@@ -118,6 +121,7 @@ public class UserServiceImpl implements UserService {
         if (!user.getActive()) {
             user.setActive(true);
             user.setUpdatedAt(Instant.now());
+            TransactionUtils.afterCommit(() -> authGrpcService.setStatus(userId, true));
             log.info("User ID: {} has been unbanned", userId);
         }
         return userMapper.userToUserProfileDtoWithoutCards(user);
