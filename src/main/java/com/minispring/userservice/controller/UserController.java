@@ -6,13 +6,18 @@ import com.minispring.userservice.dto.UserUpdateDto;
 import com.minispring.userservice.service.UserService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestAttribute;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.servlet.support.ServletUriComponentsBuilder;
@@ -25,10 +30,18 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class UserController {
 
+    @Value("${APP_INTERNAL_SECRET}")
+    private String internalSecret;
     private final UserService userService;
 
     @PostMapping
-    public ResponseEntity<UserProfileDto> create(@Valid @RequestBody UserCreateDto dto) {
+    @PreAuthorize("permitAll()")
+    public ResponseEntity<UserProfileDto> create(
+            @Valid @RequestBody UserCreateDto dto,
+            @RequestHeader(value = "Internal-Secret", required = false) String incomingSecret) {
+        if (incomingSecret == null || !incomingSecret.equals(internalSecret)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
         UserProfileDto response = userService.create(dto);
         URI location = ServletUriComponentsBuilder
                 .fromCurrentRequest()
@@ -39,20 +52,20 @@ public class UserController {
     }
 
     @GetMapping
-    public ResponseEntity<UserProfileDto> getById(@RequestAttribute("tokenUserId") UUID userId) {
-        return ResponseEntity.ok(userService.getById(userId));
+    public ResponseEntity<UserProfileDto> getById(@AuthenticationPrincipal Jwt jwt) {
+        return ResponseEntity.ok(userService.getById(UUID.fromString(jwt.getSubject())));
     }
 
     @PatchMapping
-    public ResponseEntity<UserProfileDto> update(@RequestAttribute("tokenUserId") UUID userId,
+    public ResponseEntity<UserProfileDto> update(@AuthenticationPrincipal Jwt jwt,
                                                  @Valid @RequestBody UserUpdateDto dto
     ) {
-        return ResponseEntity.ok(userService.update(userId, dto));
+        return ResponseEntity.ok(userService.update(UUID.fromString(jwt.getSubject()), dto));
     }
 
     @DeleteMapping()
-    public ResponseEntity<Void> delete(@RequestAttribute("tokenUserId") UUID userId) {
-        userService.delete(userId);
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal Jwt jwt) {
+        userService.delete(UUID.fromString(jwt.getSubject()));
         return ResponseEntity.noContent().build();
     }
 }

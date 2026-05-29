@@ -1,8 +1,12 @@
 spring:
   datasource:
-    url: ${DOCKER_DB_URL}
-    username: ${DOCKER_DB_USER}
-    password: ${DOCKER_DB_PASSWORD}
+    url: ${USER_DB_URL}
+    username: ${USER_DB_USERNAME}
+    password: ${USER_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 32
+      minimum-idle: 8
+      connection-timeout: 15000
   jpa:
     show-sql: false
     properties:
@@ -11,7 +15,24 @@ spring:
         generate_statistics: ${HIBERNATE_STATISTICS_ENABLED:false}
   data:
     redis:
-      host: redis
+      host: ${REDIS_HOST_DOCKER:redis}
+      port: ${REDIS_PORT:6379}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${APP_JWK_SET_URI_DOCKER}
+  grpc:
+    client:
+      channels:
+        auth-service-grpc:
+          address: 'auth-service:${AUTH_GRPC_SERVER_PORT}'
+          negotiation-type: plaintext
+    server:
+      port: ${USER_GRPC_SERVER_PORT:9091}
+      reflection:
+        enabled: true
+
 decorator:
   datasource:
     datasource-proxy:
@@ -20,11 +41,20 @@ decorator:
       slow-query:
         enable-logging: ${DB_SLOW_QUERY_LOGGING_ENABLED:false}
         log-level: warn
+
 logging:
   level:
     com.minispring.userservice: ${LOG_LEVEL_APP:INFO}
     org.hibernate.SQL: ${LOG_LEVEL_HIBERNATE:OFF}
     org.zalando.logbook: ${LOG_LEVEL_LOGBOOK:OFF}
+    root: INFO
+    com.minispring: TRACE
+    org.springframework.security: DEBUG
+    org.springframework.security.oauth2: DEBUG
+    org.springframework.grpc: DEBUG
+    io.grpc: DEBUG
+    liquibase: INFO
+
 app:
   cache:
     lifecycle:

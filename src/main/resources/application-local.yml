@@ -1,8 +1,11 @@
 spring:
+  config:
+    activate:
+      on-profile: local
   datasource:
-    url: ${DATABASE_URL}
-    username: ${DATABASE_USERNAME}
-    password: ${DATABASE_PASSWORD}
+    url: ${USER_DB_LOCAL_URL}
+    username: ${USER_DB_USERNAME}
+    password: ${USER_DB_PASSWORD}
   jpa:
     show-sql: true
     properties:
@@ -10,8 +13,24 @@ spring:
         format_sql: true
   data:
     redis:
-      host: ${REDIS_HOST:localhost}
+      host: ${REDIS_HOST_LOCAL:localhost}
       port: ${REDIS_PORT:6379}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: ${APP_JWK_SET_URI_LOCAL}
+  grpc:
+    client:
+      channels:
+        auth-service-grpc:
+          address: 'localhost:${AUTH_GRPC_SERVER_PORT}'
+          negotiation-type: plaintext
+    server:
+      port: ${USER_GRPC_SERVER_PORT:9091}
+      reflection:
+        enabled: true
+
 decorator:
   datasource:
     p6spy:
@@ -25,11 +44,13 @@ decorator:
       slow-query:
         enable-logging: true
         log-level: warn
+
 logging:
   level:
     com.minispring.userservice: DEBUG
     org.hibernate.SQL: DEBUG
     org.zalando.logbook: TRACE
+
 app:
   cache:
     lifecycle:

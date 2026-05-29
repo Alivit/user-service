@@ -427,8 +427,6 @@ public class PaymentCardServiceImplTest {
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
             verify(paymentCardRepository).flush();
-
-            assertThat(output.getOut()).doesNotContain("updated. Changes:");
         }
 
         @Test

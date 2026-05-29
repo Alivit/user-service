@@ -1,5 +1,7 @@
 package com.minispring.userservice.service.impl;
 
+import com.minispring.grpc.service.UserDto;
+import com.minispring.userservice.client.AuthGrpcClient;
 import com.minispring.userservice.config.JaversConfig.AuditProperties;
 import com.minispring.userservice.dto.AdminUserUpdateDto;
 import com.minispring.userservice.dto.UserCreateDto;
@@ -13,6 +15,7 @@ import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.UserRepository;
 import com.minispring.userservice.service.UserService;
 import com.minispring.userservice.service.listener.AuditUpdateEvent;
+import com.minispring.userservice.util.TransactionUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.CacheEvict;
@@ -23,11 +26,14 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import static com.minispring.userservice.exception.ExceptionAnswer.EMAIL_EXIST;
+import static com.minispring.userservice.exception.ExceptionAnswer.EMAIL_NOT_FOUND;
 import static com.minispring.userservice.exception.ExceptionAnswer.USER_NOT_FOUND;
 
 @Slf4j
@@ -38,6 +44,7 @@ public class UserServiceImpl implements UserService {
 
     private final ApplicationEventPublisher eventPublisher;
     private final AuditProperties auditProperties;
+    private final AuthGrpcClient authGrpcClient;
     private final UserRepository userRepository;
     private final UserMapper userMapper;
 
@@ -58,6 +65,25 @@ public class UserServiceImpl implements UserService {
     @Cacheable(value = "user_info", key = "#userId")
     public UserProfileDto getById(UUID userId) {
         return userMapper.userToUserProfileDto(getExistsUserWithCardsById(userId));
+    }
+
+    @Override
+    public UserDto getByIdForGrpc(UUID userId) {
+        return userMapper.userToGrpcUserDto(userRepository.findUserWithCardsById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException(String.format(USER_NOT_FOUND, userId))));
+    }
+
+    @Override
+    public UserDto getByEmailForGrpc(String email) {
+        return userMapper.userToGrpcUserDto(userRepository.findUserByEmailIncludingDeleted(email)
+                .orElseThrow(() -> new ResourceNotFoundException(String.format(EMAIL_NOT_FOUND, email))));
+    }
+
+    @Override
+    public List<UserDto> getUsersByIdsForGrpc(List<UUID> userIds) {
+        return userRepository.findAllByIdsIncludingDeleted(userIds).stream()
+                .map(userMapper::userToGrpcUserDto)
+                .toList();
     }
 
     @Override
@@ -93,8 +119,10 @@ public class UserServiceImpl implements UserService {
     @Override
     @CacheEvict(value = "user_info", key = "#userId")
     public void delete(UUID userId) {
-        userRepository.delete(getExistsUserWithCardsById(userId));
-        log.info("User {} and all associated cards were permanently deleted", userId);
+        User user = getExistsUserWithCardsById(userId);
+        authGrpcClient.deleteUser(userId);
+        userRepository.delete(user);
+        log.info("User {} successfully deleted", userId);
     }
 
     @Transactional
@@ -105,6 +133,7 @@ public class UserServiceImpl implements UserService {
         if (user.getActive()) {
             user.setActive(false);
             user.setUpdatedAt(Instant.now());
+            TransactionUtils.afterCommit(() -> authGrpcClient.setStatus(userId, false));
             log.info("User ID: {} has been banned", userId);
         }
         return userMapper.userToUserProfileDtoWithoutCards(user);
@@ -118,6 +147,7 @@ public class UserServiceImpl implements UserService {
         if (!user.getActive()) {
             user.setActive(true);
             user.setUpdatedAt(Instant.now());
+            TransactionUtils.afterCommit(() -> authGrpcClient.setStatus(userId, true));
             log.info("User ID: {} has been unbanned", userId);
         }
         return userMapper.userToUserProfileDtoWithoutCards(user);

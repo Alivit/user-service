@@ -3,42 +3,48 @@ services:
     image: postgres:18-alpine
     container_name: user-postgres
     environment:
-      POSTGRES_DB: ${DATABASE_DB}
-      POSTGRES_USER: ${DATABASE_USERNAME}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_SCHEMA: ${DATABASE_SCHEMA}
-      APP_DB_USER: ${DOCKER_DB_USER}
-      APP_DB_PASSWORD: ${DOCKER_DB_PASSWORD}
+      POSTGRES_DB: ${USER_DB_NAME}
+      POSTGRES_USER: ${USER_DB_ROOT_USER}
+      POSTGRES_PASSWORD: ${USER_DB_ROOT_PASSWORD}
+      USER_DB_USER: ${USER_DB_USERNAME}
+      USER_DB_PASSWORD: ${USER_DB_PASSWORD}
+      USER_DB_SCHEMA: ${USER_DB_SCHEMA}
     volumes:
         - ./docker-init/init-app-user.sh:/docker-entrypoint-initdb.d/init-app-user.sh
         - pg_data:/var/lib/postgresql
     ports:
-      - "5432:5432"
+      - "${USER_DB_EXTERNAL_PORT}:5432"
 
   redis:
-    image: redis:7.2-alpine
+    image: redis:7.4-alpine
     container_name: redis
     ports:
-      - "6379:6379"
+      - "${REDIS_EXTERNAL_PORT}:6379"
 
   user-service:
     build: .
     container_name: user-service
-    ports:
-      - "8080:8080"
-    depends_on:
-        - user-postgres
-        - redis
     env_file:
       - '.env'
     environment:
+      SERVER_PORT: ${USER_SERVICE_PORT}
       SPRING_PROFILES_ACTIVE: docker
+      APP_INTERNAL_SECRET: ${APP_INTERNAL_SECRET}
       DB_QUERY_LOGGING_ENABLED: ${DB_QUERY_LOGGING_ENABLED}
       DB_SLOW_QUERY_LOGGING_ENABLED: ${DB_SLOW_QUERY_LOGGING_ENABLED}
       LOG_LEVEL_APP: ${LOG_LEVEL_APP}
       LOG_LEVEL_HIBERNATE: ${LOG_LEVEL_HIBERNATE}
       LOG_LEVEL_LOGBOOK: ${LOG_LEVEL_LOGBOOK}
       APP_AUDIT_ENABLED: ${APP_AUDIT_ENABLED}
+    ports:
+      - "${USER_SERVICE_PORT}:${USER_SERVICE_PORT}"
+    depends_on:
+      - user-postgres
+      - redis
+
+networks:
+  default:
+    name: innowise-network
 
 volumes:
   pg_data:

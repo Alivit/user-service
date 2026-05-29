@@ -54,6 +54,27 @@ databaseChangeLog:
       rollback:
         - sql:
             sql: "DROP INDEX IF EXISTS uk_users_email;"
+  - changeSet:
+      id: 7
+      author: Chuiko Vitali
+      dbms: postgresql
+      preConditions:
+        - onFail: MARK_RAN
+          not:
+            - indexExists:
+                tableName: users
+                indexName: idx_users_email
+      changes:
+        - createIndex:
+            tableName: users
+            indexName: idx_users_email
+            columns:
+              - column:
+                  name: email
+      rollback:
+        - dropIndex:
+            tableName: users
+            indexName: idx_users_email
 
 
 

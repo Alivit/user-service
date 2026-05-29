@@ -1,6 +1,6 @@
 package com.minispring.userservice.service.impl;
 
-import com.minispring.userservice.config.JaversConfig;
+import com.minispring.userservice.config.JaversConfig.AuditProperties;
 import com.minispring.userservice.dto.PaymentCardCreateDto;
 import com.minispring.userservice.dto.PaymentCardProfileDto;
 import com.minispring.userservice.dto.PaymentCardUpdateDto;
@@ -44,7 +44,7 @@ public class PaymentCardServiceImpl implements PaymentCardService {
     private final PaymentCardMapper paymentCardMapper;
     private final CacheManager cacheManager;
     private final ApplicationEventPublisher eventPublisher;
-    private final JaversConfig.AuditProperties auditProperties;
+    private final AuditProperties auditProperties;
 
     @Override
     @Transactional

@@ -3,31 +3,41 @@ package com.minispring.userservice.controller;
 import com.minispring.userservice.BaseIntegrationTest;
 import com.minispring.userservice.dto.AdminUserUpdateDto;
 import com.minispring.userservice.dto.PaymentCardCreateDto;
+import com.minispring.userservice.dto.PaymentCardProfileDto;
+import com.minispring.userservice.dto.UserProfileDto;
 import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.UserRepository;
+import com.minispring.userservice.service.PaymentCardService;
 import com.minispring.userservice.service.UserService;
+import com.minispring.userservice.client.AuthGrpcClient;
 import org.instancio.Instancio;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
-import java.util.ArrayList;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.InstanceOfAssertFactories.LIST;
 import static org.instancio.Select.field;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 @AutoConfigureMockMvc
 public class AdminUserControllerIT extends BaseIntegrationTest {
@@ -39,6 +49,9 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
     private UserRepository userRepository;
 
     @Autowired
+    private PaymentCardService paymentCardService;
+
+    @Autowired
     private UserService userService;
 
     @Autowired
@@ -48,21 +61,19 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
     private JdbcTemplate jdbcTemplate;
 
     private static final String BASE_URL = "/api/v1/admin/users";
-    private User user;
+    private UserProfileDto user;
+    private Jwt adminToken;
 
     @BeforeEach
-    public void setUpUser() {
-        UUID authServiceId = Instancio.create(UUID.class);
+    public void init(TestInfo testInfo) {
+        adminToken = createToken("admin", "ADMIN");
 
-        user = Instancio.of(User.class)
-                .set(field(User::getId), authServiceId)
-                .generate(field(User::getEmail), gen -> gen.text().pattern("#c#c#c#c#c#c#c#c@domain.com"))
-                .set(field(User::getActive), true)
-                .set(field(User::getCards), new ArrayList<>())
-                .ignore(field(User::getVersion))
-                .create();
+        if (testInfo.getTags().contains("init")) {
+            return;
+        }
 
-        user = userRepository.saveAndFlush(user);
+        User created = userRepository.saveAndFlush(createSecureUser(adminToken.getSubject()));
+        user = userService.getById(created.getId());
     }
 
     @AfterEach
@@ -73,31 +84,39 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
     @Nested
     class CreateCardTest {
 
-        @Test
-        void createShouldReturnCreatedStatusAndLocationHeader() {
-            PaymentCardCreateDto createDto = Instancio.of(PaymentCardCreateDto.class)
+        private PaymentCardCreateDto createDto;
+
+        @BeforeEach
+        public void initForCreate(){
+            createDto = Instancio.of(PaymentCardCreateDto.class)
                     .generate(field(PaymentCardCreateDto::number), gen -> gen.text().pattern("4111111111111111"))
                     .set(field(PaymentCardCreateDto::expirationDate), java.time.YearMonth.now().plusYears(2))
                     .create();
+        }
 
-            MvcTestResult result =
-                    mockMvcTester.post().uri(BASE_URL + "/{userId}/cards", user.getId())
-                            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                            .content(jsonMapper.writeValueAsString(createDto))
-                            .exchange();
+        @Test
+        void createShouldReturnCreatedStatusAndLocationHeader() {
+            MvcTestResult result = createRequest(user.id(), createDto);
 
-            assertThat(result).hasStatus(org.springframework.http.HttpStatus.CREATED);
-
-            assertThat(result).headers()
-                    .extracting(h -> h.getFirst("Location"))
-                    .asString()
-                    .contains(BASE_URL);
+            assertThat(result)
+                    .hasStatus(HttpStatus.CREATED).headers()
+                    .hasHeaderSatisfying("Location", values -> {
+                        String location = values.getFirst();
+                        assertThat(location).contains(BASE_URL);
+                        assertThat(location).contains(user.id().toString());
+                    });
 
             assertThat(result).bodyJson()
+                    .convertTo(PaymentCardProfileDto.class)
+                    .usingRecursiveComparison()
+                    .comparingOnlyFields("number", "holder", "expirationDate")
+                    .isEqualTo(createDto);
+
+            assertThat(result).bodyJson()
+                    .hasPathSatisfying("$.active", active -> assertThat(active).isEqualTo(true))
                     .hasPath("$.id")
-                    .hasPathSatisfying("$.number", number -> assertThat(number).isEqualTo(createDto.number()))
-                    .hasPathSatisfying("$.holder", holder -> assertThat(holder).isEqualTo(createDto.holder()))
-                    .hasPathSatisfying("$.active", active -> assertThat(active).isEqualTo(true));
+                    .hasPath("$.createdAt")
+                    .hasPathSatisfying("$.user.id", id -> assertThat(id).isEqualTo(user.id().toString()));
         }
 
         @Test
@@ -106,48 +125,52 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
                     .set(field(PaymentCardCreateDto::number), "NotValid")
                     .create();
 
-            assertThat(mockMvcTester.post().uri(BASE_URL + "/{userId}/cards", user.getId())
-                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(invalidDto)))
-                    .hasStatus(org.springframework.http.HttpStatus.BAD_REQUEST);
+            assertThat(createRequest(user.id(), invalidDto)).hasStatus(HttpStatus.BAD_REQUEST);
         }
 
         @Test
+        @Tag("init")
         void createShouldReturnNotFoundWhenUserDoesNotExist() {
-            UUID nonExistentUserId = UUID.randomUUID();
-            PaymentCardCreateDto createDto = Instancio.of(PaymentCardCreateDto.class)
-                    .generate(field(PaymentCardCreateDto::number), gen -> gen.text().pattern("4111111111111111"))
-                    .set(field(PaymentCardCreateDto::expirationDate), java.time.YearMonth.now().plusYears(2))
-                    .create();
+            assertThat(createRequest(UUID.randomUUID(), createDto)).hasStatus(HttpStatus.NOT_FOUND);
+        }
 
-            assertThat(mockMvcTester.post().uri(BASE_URL + "/{userId}/cards", nonExistentUserId)
-                    .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(createDto)))
-                    .hasStatus(org.springframework.http.HttpStatus.NOT_FOUND);
+        @Test
+        void createShouldReturnConflictWhenCardNumberAlreadyExists() {
+            paymentCardService.create(user.id(), createDto);
+
+            assertThat(createRequest(user.id(), createDto)).hasStatus(HttpStatus.CONFLICT);
+        }
+
+        private MvcTestResult createRequest(UUID id, PaymentCardCreateDto dto) {
+            return mockMvcTester.perform(post(BASE_URL + "/{userId}/cards", id)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(jsonMapper.writeValueAsString(dto)));
         }
     }
 
     @Nested
     class GetAllUsersTest {
 
+        private User exampleUser;
+
         @BeforeEach
-        public void init() {
-            User exampleUser = Instancio.of(User.class)
-                    .set(field(User::getName), "Test")
-                    .set(field(User::getSurname), "User")
-                    .set(field(User::getCards), new java.util.ArrayList<>())
-                    .ignore(field(User::getVersion))
-                    .create();
-            userRepository.saveAndFlush(exampleUser);
+        public void initForGetAll() {
+            exampleUser = userRepository.saveAndFlush(
+                    Instancio.of(User.class)
+                            .set(field(User::getCards), new java.util.ArrayList<>())
+                            .ignore(field(User::getVersion))
+                            .create());
         }
 
         @Test
         void getAllUsersShouldReturnPagedUsersWithDefaultPagination() {
-            MvcTestResult result = mockMvcTester.get().uri(BASE_URL)
-                    .exchange();
+            MvcTestResult result = mockMvcTester.perform(get(BASE_URL)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue()));
 
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
+            assertThat(result)
+                    .hasStatusOk()
+                    .bodyJson()
                     .hasPath("$.content")
                     .hasPathSatisfying("$.page.totalElements", total -> assertThat(total).isEqualTo(2))
                     .hasPathSatisfying("$.page.size", size -> assertThat(size).isEqualTo(10));
@@ -155,33 +178,32 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
 
         @Test
         void getAllUsersShouldFilterByDtoParameters() {
-            String targetName = "Test";
-            String targetSurname = "User";
+            MvcTestResult result = mockMvcTester.perform(get(BASE_URL)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue())
+                    .param("name", exampleUser.getName())
+                    .param("surname", exampleUser.getSurname()));
 
-            MvcTestResult result = mockMvcTester.get().uri(BASE_URL)
-                    .param("name", targetName)
-                    .param("surname", targetSurname)
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
+            assertThat(result)
+                    .hasStatusOk()
+                    .bodyJson()
                     .hasPathSatisfying("$.page.totalElements", total -> assertThat(total).isEqualTo(1))
                     .hasPathSatisfying("$.content", content -> assertThat(content)
                             .asInstanceOf(LIST)
                             .hasSize(1))
-                    .hasPathSatisfying("$.content[0].name", name -> assertThat(name).isEqualTo(targetName))
-                    .hasPathSatisfying("$.content[0].surname", surname -> assertThat(surname).isEqualTo(targetSurname));
+                    .hasPathSatisfying("$.content[0].name", name -> assertThat(name).isEqualTo(exampleUser.getName()))
+                    .hasPathSatisfying("$.content[0].surname", surname -> assertThat(surname).isEqualTo(exampleUser.getSurname()));
         }
 
         @Test
         void getAllUsersShouldRespectCustomPaginationParameters() {
-            MvcTestResult result = mockMvcTester.get().uri(BASE_URL)
+            MvcTestResult result = mockMvcTester.perform(get(BASE_URL)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue())
                     .param("page", "0")
-                    .param("size", "1")
-                    .exchange();
+                    .param("size", "1"));
 
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
+            assertThat(result)
+                    .hasStatusOk()
+                    .bodyJson()
                     .hasPathSatisfying("$.page.totalElements", total -> assertThat(total).isEqualTo(2))
                     .hasPathSatisfying("$.page.size", size -> assertThat(size).isEqualTo(1))
                     .hasPathSatisfying("$.content", content -> assertThat(content).asInstanceOf(LIST).hasSize(1));
@@ -193,100 +215,68 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
 
         @Test
         void updateShouldReturnUserProfileDtoWithUpdatedName() {
-            String testName = "TestName";
             AdminUserUpdateDto updateDto = Instancio.ofBlank(AdminUserUpdateDto.class)
-                    .set(field(AdminUserUpdateDto::name), testName)
+                    .set(field(AdminUserUpdateDto::name), "TestName")
                     .create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL + "/{userId}", user.getId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(testName))
-                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(user.getSurname()));
+            assertThat(createRequest(updateDto, user.id()))
+                    .hasStatusOk()
+                    .bodyJson()
+                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(updateDto.name()))
+                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(user.surname()));
         }
 
         @Test
         void updateShouldReturnUserProfileDtoWithUpdatedSurname() {
-            String testSurname = "TestSurname";
             AdminUserUpdateDto updateDto = Instancio.ofBlank(AdminUserUpdateDto.class)
-                    .set(field(AdminUserUpdateDto::surname), testSurname)
+                    .set(field(AdminUserUpdateDto::surname), "TestSurname")
                     .create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL + "/{userId}", user.getId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(testSurname))
-                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(user.getName()));
+            assertThat(createRequest(updateDto, user.id()))
+                    .hasStatusOk()
+                    .bodyJson()
+                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(updateDto.surname()))
+                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(user.name()));
         }
 
         @Test
         void updateShouldReturnUserProfileDtoWithUpdatedBirthDate() {
-            LocalDate testBirthDate = LocalDate.now().minusYears(20);
             AdminUserUpdateDto updateDto = Instancio.ofBlank(AdminUserUpdateDto.class)
-                    .set(field(AdminUserUpdateDto::birthDate), testBirthDate)
+                    .set(field(AdminUserUpdateDto::birthDate), LocalDate.now().minusYears(20))
                     .create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL + "/{userId}", user.getId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.birthDate", date -> assertThat(date).isEqualTo(testBirthDate.toString()));
-        }
-
-        @Test
-        void updateShouldReturnUserProfileDtoWithUpdatedActiveStatus() {
-            AdminUserUpdateDto updateDto = Instancio.ofBlank(AdminUserUpdateDto.class)
-                    .set(field(AdminUserUpdateDto::active), false)
-                    .create();
-
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL + "/{userId}", user.getId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.active", active -> assertThat(active).isEqualTo(false));
+            assertThat(createRequest(updateDto, user.id()))
+                    .hasStatusOk()
+                    .bodyJson()
+                    .hasPathSatisfying("$.birthDate", date -> assertThat(date).isEqualTo(updateDto.birthDate().toString()));
         }
 
         @Test
         void updateWithEmptyDtoShouldReturnUserProfileWithNoChanges() {
             AdminUserUpdateDto updateDto = Instancio.ofBlank(AdminUserUpdateDto.class).create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL + "/{userId}", user.getId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.id", id -> assertThat(id).isEqualTo(String.valueOf(user.getId())))
-                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(user.getName()))
-                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(user.getSurname()));
+            assertThat(createRequest(updateDto, user.id()))
+                    .hasStatusOk()
+                    .bodyJson()
+                    .convertTo(UserProfileDto.class)
+                    .usingRecursiveComparison()
+                    .ignoringFields("cards")
+                    .isEqualTo(user);
         }
 
         @Test
+        @Tag("init")
         void updateShouldReturnNotFoundWhenUserDoesNotExist() {
-            UUID nonExistentUserId = UUID.randomUUID();
             AdminUserUpdateDto updateDto = Instancio.ofBlank(AdminUserUpdateDto.class).create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL + "/{userId}", nonExistentUserId)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
+            assertThat(createRequest(updateDto, UUID.randomUUID())).hasStatus(HttpStatus.NOT_FOUND);
+        }
 
-            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        private MvcTestResult createRequest(AdminUserUpdateDto dto, UUID id) {
+            return mockMvcTester.perform(patch(BASE_URL + "/{userId}", id)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(jsonMapper.writeValueAsString(dto)));
         }
     }
 
@@ -295,12 +285,12 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
 
         @Test
         void deleteShouldReturnNoContentAndPermanentlyDeleteUserWhenUserExists() {
-            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL  + "/{userId}", user.getId()));
+            MvcTestResult result = createRequest(user.id());
 
-            assertThat(userRepository.existsById(user.getId())).isFalse();
+            assertThat(userRepository.existsById(user.id())).isFalse();
 
             Boolean deleted = jdbcTemplate.queryForObject(
-                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.getId()
+                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.id()
             );
 
             assertThat(deleted).isTrue();
@@ -309,17 +299,22 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
 
         @Test
         void deleteShouldReturnNotFoundWhenUserDoesNotExist() {
-            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL  + "/{userId}", UUID.randomUUID())
-                    .contentType(MediaType.APPLICATION_JSON));
+            MvcTestResult result = createRequest(UUID.randomUUID());
 
-            assertThat(userRepository.existsById(user.getId())).isTrue();
+            assertThat(userRepository.existsById(user.id())).isTrue();
 
             Boolean deleted = jdbcTemplate.queryForObject(
-                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.getId()
+                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.id()
             );
 
             assertThat(deleted).isFalse();
             assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        }
+
+        private MvcTestResult createRequest(UUID id) {
+            return mockMvcTester.perform(delete(BASE_URL + "/{userId}", id)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue())
+                    .contentType(MediaType.APPLICATION_JSON));
         }
     }
 
@@ -328,77 +323,93 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
 
         @Test
         void getByIdShouldReturnUserProfileDto() {
-            MvcTestResult result = mockMvcTester.get().uri(BASE_URL + "/{userId}", user.getId())
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.id", id -> assertThat(id).isEqualTo(String.valueOf(user.getId())))
-                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(user.getName()))
-                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(user.getSurname()))
-                    .hasPathSatisfying("$.email", email -> assertThat(email).isEqualTo(user.getEmail()));
+            assertThat(createRequest(user.id()))
+                    .hasStatusOk()
+                    .bodyJson()
+                    .convertTo(UserProfileDto.class)
+                    .usingRecursiveComparison()
+                    .isEqualTo(user);
         }
 
         @Test
+        @Tag("init")
         void getByIdShouldReturnNotFoundWhenUserDoesNotExist() {
-            UUID nonExistentUserId = UUID.randomUUID();
+            assertThat(createRequest(UUID.randomUUID())).hasStatus(HttpStatus.NOT_FOUND);
+        }
 
-            MvcTestResult result = mockMvcTester.get().uri(BASE_URL + "/{userId}", nonExistentUserId)
-                    .exchange();
-
-            assertThat(result).hasStatus(404);
+        private MvcTestResult createRequest(UUID id) {
+            return mockMvcTester.perform(get(BASE_URL + "/{userId}", id)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue()));
         }
     }
 
     @Nested
     class DeactivateUserTest {
 
+        @MockitoBean
+        protected AuthGrpcClient authGrpcClient;
+
         @Test
         void deactivateShouldReturnUserProfileDtoWithActiveFalse() {
-            MvcTestResult result = mockMvcTester.post().uri(BASE_URL + "/{userId}/deactivate", user.getId())
-                    .exchange();
+            MvcTestResult result = createRequest(user.id());
 
-            assertThat(result).hasStatusOk();
+            assertThat(result)
+                    .hasStatusOk()
+                    .bodyJson()
+                    .convertTo(UserProfileDto.class)
+                    .usingRecursiveComparison()
+                    .ignoringFields("cards", "updatedAt", "active")
+                    .isEqualTo(user);
+
             assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.id", id -> assertThat(id).isEqualTo(String.valueOf(user.getId())))
                     .hasPathSatisfying("$.active", active -> assertThat(active).isEqualTo(false));
         }
 
         @Test
+        @Tag("init")
         void deactivateShouldReturnNotFoundWhenUserDoesNotExist() {
-            UUID invalidId = UUID.randomUUID();
+            assertThat(createRequest(UUID.randomUUID())).hasStatus(HttpStatus.NOT_FOUND);
+        }
 
-            MvcTestResult result = mockMvcTester.post().uri(BASE_URL + "/{userId}/deactivate", invalidId)
-                    .exchange();
-
-            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        private MvcTestResult createRequest(UUID id) {
+            return mockMvcTester.perform(post(BASE_URL + "/{userId}/deactivate", id)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue()));
         }
     }
 
     @Nested
     class ActivateUserTest {
 
+        @MockitoBean
+        protected AuthGrpcClient authGrpcClient;
+
         @Test
         void activateShouldReturnUserProfileDtoWithActiveTrue() {
-            userService.deactivate(user.getId());
+            userService.deactivate(user.id());
 
-            MvcTestResult result = mockMvcTester.post().uri(BASE_URL + "/{userId}/activate", user.getId())
-                    .exchange();
+            MvcTestResult result = createRequest(user.id());
 
-            assertThat(result).hasStatusOk();
+            assertThat(result)
+                    .hasStatusOk()
+                    .bodyJson()
+                    .convertTo(UserProfileDto.class)
+                    .usingRecursiveComparison()
+                    .ignoringFields("cards", "updatedAt", "active")
+                    .isEqualTo(user);
+
             assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.id", id -> assertThat(id).isEqualTo(String.valueOf(user.getId())))
                     .hasPathSatisfying("$.active", active -> assertThat(active).isEqualTo(true));
         }
 
         @Test
+        @Tag("init")
         void activateShouldReturnNotFoundWhenUserDoesNotExist() {
-            UUID invalidId = UUID.randomUUID();
+            assertThat(createRequest(UUID.randomUUID())).hasStatus(HttpStatus.NOT_FOUND);
+        }
 
-            MvcTestResult result = mockMvcTester.post().uri(BASE_URL + "/{userId}/activate", invalidId)
-                    .exchange();
-
-            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        private MvcTestResult createRequest(UUID id) {
+            return mockMvcTester.perform(post(BASE_URL + "/{userId}/activate", id)
+                    .header("Authorization", "Bearer " + adminToken.getTokenValue()));
         }
     }
 }

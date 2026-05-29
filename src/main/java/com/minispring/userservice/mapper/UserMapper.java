@@ -1,5 +1,7 @@
 package com.minispring.userservice.mapper;
 
+import com.google.protobuf.Timestamp;
+import com.minispring.grpc.service.UserDto;
 import com.minispring.userservice.dto.AdminUserUpdateDto;
 import com.minispring.userservice.dto.UserCreateDto;
 import com.minispring.userservice.dto.UserProfileDto;
@@ -14,9 +16,10 @@ import org.mapstruct.MappingTarget;
 import org.mapstruct.NullValuePropertyMappingStrategy;
 import org.mapstruct.ReportingPolicy;
 
+import java.time.Instant;
+
 @Mapper(unmappedTargetPolicy = ReportingPolicy.IGNORE,
-        componentModel = MappingConstants.ComponentModel.SPRING,
-        builder = @Builder(disableBuilder = true))
+        componentModel = MappingConstants.ComponentModel.SPRING)
 public interface UserMapper {
 
     User userCreateDtoToUser(UserCreateDto userCreateDto);
@@ -35,4 +38,19 @@ public interface UserMapper {
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     void updateUserFromDto(AdminUserUpdateDto dto, @MappingTarget User user);
+
+    @Mapping(target = "id", expression = "java(user.getId().toString())")
+    @Mapping(target = "birthDate", expression = "java(user.getBirthDate() != null ? user.getBirthDate().toString() : \"\")")
+    UserDto userToGrpcUserDto(User user);
+
+    default Timestamp map(Instant instant) {
+        if (instant == null) {
+            return null;
+        }
+
+        return Timestamp.newBuilder()
+                .setSeconds(instant.getEpochSecond())
+                .setNanos(instant.getNano())
+                .build();
+    }
 }

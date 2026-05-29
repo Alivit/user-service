@@ -1,4 +1,4 @@
-package com.minispring.userservice.mapper;
+package com.minispring.userservice.mapper.converter;
 
 import jakarta.persistence.AttributeConverter;
 import jakarta.persistence.Converter;

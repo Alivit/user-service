@@ -3,6 +3,9 @@ spring:
     active: local
   application:
     name: user-service
+  threads:
+    virtual:
+      enabled: true
   jpa:
     hibernate:
       ddl-auto: none
@@ -10,13 +13,13 @@ spring:
     properties:
       hibernate:
         format_sql: true
-        default_schema: ${DATABASE_SCHEMA}
+        default_schema: ${USER_DB_SCHEMA}
         default_batch_fetch_size: 50
     open-in-view: false
   liquibase:
     enabled: true
     change-log: db/changelog/changelog.yml
-    default-schema: ${DATABASE_SCHEMA}
+    default-schema: ${USER_DB_SCHEMA}
   data:
     web:
       pageable:

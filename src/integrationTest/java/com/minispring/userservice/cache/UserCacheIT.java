@@ -7,6 +7,7 @@ import com.minispring.userservice.exception.ResourceNotFoundException;
 import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.UserRepository;
 import com.minispring.userservice.service.UserService;
+import com.minispring.userservice.client.AuthGrpcClient;
 import org.awaitility.Awaitility;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,6 +19,7 @@ import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -125,8 +127,7 @@ public class UserCacheIT extends BaseIntegrationTest {
             AdminUserUpdateDto adminUpdateDto = new AdminUserUpdateDto(
                     "AdminName",
                     "AdminSurname",
-                    null,
-                    true);
+                    null);
             userService.update(user.getId(), adminUpdateDto);
 
             assertCacheEmpty("user_info", user.getId());
@@ -156,8 +157,7 @@ public class UserCacheIT extends BaseIntegrationTest {
             AdminUserUpdateDto adminUpdateDto = new AdminUserUpdateDto(
                     "AdminName",
                     "AdminSurname",
-                    null,
-                    true);
+                    null);
             assertThrows(ResourceNotFoundException.class, () ->
                     userService.update(UUID.randomUUID(), adminUpdateDto)
             );
@@ -197,6 +197,9 @@ public class UserCacheIT extends BaseIntegrationTest {
     @Nested
     class DeactivateCacheTest {
 
+        @MockitoBean
+        protected AuthGrpcClient authGrpcClient;
+
         @Test
         void deactivateShouldEvictCachesWhenUserExists() {
             User user = createAndSaveActiveUser("test@example.com");
@@ -224,6 +227,9 @@ public class UserCacheIT extends BaseIntegrationTest {
 
     @Nested
     class ActivateCacheTest {
+
+        @MockitoBean
+        protected AuthGrpcClient authGrpcClient;
 
         @Test
         void activateShouldEvictCachesWhenUserExists() {

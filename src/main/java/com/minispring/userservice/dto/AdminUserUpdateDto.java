@@ -22,8 +22,6 @@ public record AdminUserUpdateDto(
 
         @Past(message = "The date of birth must be in the past")
         @JsonFormat(pattern = "yyyy-MM-dd")
-        LocalDate birthDate,
-
-        Boolean active
+        LocalDate birthDate
 ) {
 }

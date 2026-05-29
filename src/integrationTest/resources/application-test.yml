@@ -2,10 +2,7 @@ spring:
   application:
     name: user-service-test
 
-  datasource:
-    url: jdbc:postgresql://localhost:5432/user_service_test
-    username: test
-    password: test
+  datasource: {}
 
   jpa:
     hibernate:
@@ -32,8 +29,6 @@ spring:
 
   data:
     redis:
-      host: localhost
-      port: 6379
       timeout: 1000ms
       lettuce:
         pool:

@@ -12,6 +12,7 @@ import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.Formula;
 import org.hibernate.annotations.SoftDelete;
 import org.springframework.data.domain.Persistable;
 
@@ -49,6 +50,9 @@ public class User extends AuditableEntity implements Persistable<UUID> {
 
     @Column(nullable = false, columnDefinition = "boolean default true")
     private Boolean active = Boolean.TRUE;
+
+    @Formula("deleted")
+    private boolean deleted;
 
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<PaymentCard> cards = new ArrayList<>();
