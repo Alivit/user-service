@@ -1,6 +1,7 @@
 package com.minispring.userservice.service.impl;
 
 import ch.qos.logback.classic.Logger;
+import com.minispring.userservice.config.JaversConfig.AuditProperties;
 import com.minispring.userservice.dto.AdminUserUpdateDto;
 import com.minispring.userservice.dto.UserCreateDto;
 import com.minispring.userservice.dto.UserParamsDto;
@@ -11,6 +12,7 @@ import com.minispring.userservice.exception.ResourceNotFoundException;
 import com.minispring.userservice.mapper.UserMapper;
 import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.UserRepository;
+import com.minispring.userservice.service.listener.AuditUpdateEvent;
 import org.instancio.Instancio;
 import org.javers.core.Javers;
 import org.javers.core.JaversBuilder;
@@ -25,6 +27,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -59,6 +62,18 @@ class UserServiceImplTest {
     @Spy
     private final Javers javers = JaversBuilder.javers().build();
 
+    @Spy
+    private AuditProperties auditProperties = new AuditProperties();
+
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
+    @BeforeEach
+    void setUp() {;
+        auditProperties = new AuditProperties();
+        auditProperties.setEnabled(true);
+    }
+
     @InjectMocks
     private UserServiceImpl userService;
 
@@ -81,10 +96,10 @@ class UserServiceImplTest {
                     .set(field(UserProfileDto::id), userId)
                     .create();
 
-            given(userRepository.existsByEmail(createDto.email())).willReturn(false);
             given(userMapper.userCreateDtoToUser(createDto)).willReturn(userBeforeSaving);
             given(userRepository.saveAndFlush(userBeforeSaving)).willReturn(savedUser);
-            given(userMapper.userToUserProfileDto(savedUser)).willReturn(expectedDto);
+
+            given(userMapper.userToUserProfileDtoWithoutCards(savedUser)).willReturn(expectedDto);
 
             UserProfileDto result = userService.create(createDto);
 
@@ -93,30 +108,18 @@ class UserServiceImplTest {
         }
 
         @Test
-        void createShouldThrowResourceAlreadyExistsExceptionWhenEmailExists() {
-            given(userRepository.existsByEmail(createDto.email())).willReturn(true);
-
-            assertThatThrownBy(() -> userService.create(createDto))
-                    .isInstanceOf(ResourceAlreadyExistsException.class)
-                    .hasMessage(String.format(EMAIL_EXIST, createDto.email()));
-
-            verifyNoInteractions(userMapper);
-            verify(userRepository, never()).saveAndFlush(any());
-        }
-
-        @Test
-        void createShouldThrowDataIntegrityViolationExceptionOnSave() {
+        void createShouldThrowResourceAlreadyExistsExceptionOnDataIntegrityViolation() {
             User userBeforeSaving = Instancio.create(User.class);
 
-            given(userRepository.existsByEmail(createDto.email())).willReturn(false);
             given(userMapper.userCreateDtoToUser(createDto)).willReturn(userBeforeSaving);
             given(userRepository.saveAndFlush(userBeforeSaving))
                     .willThrow(new DataIntegrityViolationException("Could not execute statement"));
 
             assertThatThrownBy(() -> userService.create(createDto))
-                    .isInstanceOf(DataIntegrityViolationException.class);
+                    .isInstanceOf(ResourceAlreadyExistsException.class)
+                    .hasMessage(String.format(EMAIL_EXIST, createDto.email()));
 
-            verify(userMapper, never()).userToUserProfileDto(any());
+            verify(userMapper, never()).userToUserProfileDtoWithoutCards(any());
         }
     }
 
@@ -131,7 +134,7 @@ class UserServiceImplTest {
                     .set(field(UserProfileDto::id), userId)
                     .create();
 
-            given(userRepository.findById(userId)).willReturn(Optional.of(user));
+            given(userRepository.findUserWithCardsById(userId)).willReturn(Optional.of(user));
             given(userMapper.userToUserProfileDto(user)).willReturn(expectedDto);
 
             UserProfileDto result = userService.getById(userId);
@@ -143,7 +146,7 @@ class UserServiceImplTest {
         void getByIdShouldThrowResourceNotFoundException() {
             UUID userId = Instancio.create(UUID.class);
 
-            given(userRepository.findById(userId)).willReturn(Optional.empty());
+            given(userRepository.findUserWithCardsById(userId)).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> userService.getById(userId))
                     .isInstanceOf(ResourceNotFoundException.class)
@@ -267,12 +270,9 @@ class UserServiceImplTest {
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'name' changed:")
-                    .contains("-> '" + testName + "'");
             verify(userMapper).updateUserFromDto(updateDto, existingUser);
             verify(userRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -287,12 +287,9 @@ class UserServiceImplTest {
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'surname' changed:")
-                    .contains("-> '" + testSurname + "'");
             verify(userMapper).updateUserFromDto(updateDto, existingUser);
             verify(userRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -304,9 +301,9 @@ class UserServiceImplTest {
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut()).doesNotContain("have changes:");
             verify(userMapper).updateUserFromDto(updateDto, existingUser);
             verify(userRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -325,7 +322,7 @@ class UserServiceImplTest {
         private void setupForUpdateUser(UserUpdateDto userStateAfter) {
             given(userRepository.findById(userId)).willReturn(Optional.of(existingUser));
             given(userMapper.userToUserUpdateDto(existingUser)).willReturn(userStateBefore, userStateAfter);
-            given(userMapper.userToUserProfileDto(existingUser)).willReturn(expectedDto);
+            given(userMapper.userToUserProfileDtoWithoutCards(existingUser)).willReturn(expectedDto);
         }
     }
 
@@ -355,7 +352,7 @@ class UserServiceImplTest {
         private void setupMocks(AdminUserUpdateDto userStateAfter) {
             given(userRepository.findById(userId)).willReturn(Optional.of(existingUser));
             given(userMapper.userToAdminUserUpdateDto(existingUser)).willReturn(userStateBefore, userStateAfter);
-            given(userMapper.userToUserProfileDto(existingUser)).willReturn(expectedDto);
+            given(userMapper.userToUserProfileDtoWithoutCards(existingUser)).willReturn(expectedDto);
         }
 
         @Test
@@ -370,12 +367,9 @@ class UserServiceImplTest {
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'name' changed:")
-                    .contains("-> '" + testName + "'");
             verify(userMapper).updateUserFromDto(updateDto, existingUser);
             verify(userRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -390,12 +384,9 @@ class UserServiceImplTest {
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'surname' changed:")
-                    .contains("-> '" + testSurname + "'");
             verify(userMapper).updateUserFromDto(updateDto, existingUser);
             verify(userRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -409,10 +400,8 @@ class UserServiceImplTest {
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'birthDate' changed:");
             verify(userRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -427,11 +416,8 @@ class UserServiceImplTest {
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut())
-                    .contains("have changes:")
-                    .contains("- 'active' changed:")
-                    .contains("-> '" + testActive + "'");
             verify(userRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -443,8 +429,8 @@ class UserServiceImplTest {
             UserProfileDto result = userService.update(userId, updateDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            assertThat(output.getOut()).doesNotContain("have changes:");
             verify(userRepository).flush();
+            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
         }
 
         @Test
@@ -457,6 +443,37 @@ class UserServiceImplTest {
                     .isInstanceOf(ResourceNotFoundException.class);
 
             verify(userRepository, never()).flush();
+        }
+    }
+
+    @Nested
+    class DeleteTest {
+
+        @Test
+        void deleteShouldPermanentlyDeleteUserAndCardsWhenUserExists() {
+            UUID userId = Instancio.create(UUID.class);
+            User existingUser = Instancio.of(User.class)
+                    .set(field(User::getId), userId)
+                    .create();
+
+            given(userRepository.findUserWithCardsById(userId)).willReturn(Optional.of(existingUser));
+
+            userService.delete(userId);
+
+            verify(userRepository).delete(existingUser);
+        }
+
+        @Test
+        void deleteShouldThrowResourceNotFoundExceptionWhenUserDoesNotExist() {
+            UUID userId = Instancio.create(UUID.class);
+
+            given(userRepository.findUserWithCardsById(userId)).willReturn(Optional.empty());
+
+            assertThatThrownBy(() -> userService.delete(userId))
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage(String.format(USER_NOT_FOUND, userId));
+
+            verify(userRepository, never()).delete(any(User.class));
         }
     }
 
@@ -475,14 +492,13 @@ class UserServiceImplTest {
                     .create();
 
             given(userRepository.findById(userId)).willReturn(Optional.of(existingUser));
-            given(userMapper.userToUserProfileDto(existingUser)).willReturn(expectedDto);
+            given(userMapper.userToUserProfileDtoWithoutCards(existingUser)).willReturn(expectedDto);
 
             UserProfileDto result = userService.deactivate(userId);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
             assertThat(result.active()).isFalse();
             assertThat(existingUser.getActive()).isFalse();
-            verify(userRepository).flush();
         }
 
         @Test
@@ -514,14 +530,13 @@ class UserServiceImplTest {
                     .create();
 
             given(userRepository.findById(userId)).willReturn(Optional.of(existingUser));
-            given(userMapper.userToUserProfileDto(existingUser)).willReturn(expectedDto);
+            given(userMapper.userToUserProfileDtoWithoutCards(existingUser)).willReturn(expectedDto);
 
             UserProfileDto result = userService.activate(userId);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
             assertThat(result.active()).isTrue();
             assertThat(existingUser.getActive()).isTrue();
-            verify(userRepository).flush();
         }
 
         @Test

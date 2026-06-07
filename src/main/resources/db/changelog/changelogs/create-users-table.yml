@@ -12,6 +12,12 @@ databaseChangeLog:
                   constraints:
                     primaryKey: true
               - column:
+                  name: version
+                  type: bigint
+                  defaultValueNumeric: 0
+                  constraints:
+                    nullable: false
+              - column:
                   name: name
                   type: varchar(100)
                   constraints:
@@ -29,7 +35,6 @@ databaseChangeLog:
                   type: varchar(50)
                   constraints:
                     nullable: false
-                    unique: true
               - column:
                   name: active
                   type: boolean
@@ -43,6 +48,12 @@ databaseChangeLog:
               - column:
                   name: updated_at
                   type: timestamp
+              - column:
+                  name: deleted
+                  type: boolean
+                  defaultValueBoolean: false
+                  constraints:
+                    nullable: false
 
 
 

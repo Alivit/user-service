@@ -57,7 +57,7 @@ public class GlobalExceptionHandler {
                 "ILLEGAL_STATE_ERROR",
                 ex.getMessage()
         );
-        return ResponseEntity.badRequest().body(response);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 
     @ExceptionHandler(BadRequestException.class)

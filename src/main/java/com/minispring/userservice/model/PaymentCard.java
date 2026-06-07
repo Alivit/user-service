@@ -6,17 +6,16 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
-import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.UpdateTimestamp;
+import org.hibernate.annotations.SoftDelete;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
 
-import java.time.Instant;
 import java.time.YearMonth;
 import java.util.UUID;
 
@@ -26,11 +25,15 @@ import java.util.UUID;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class PaymentCard {
+public class PaymentCard extends AuditableEntity {
 
     @Id
     @UuidGenerator
     private UUID id;
+
+    @Version
+    @Column(name = "version")
+    private Long version;
 
     @ManyToOne
     @JoinColumn(name = "user_id", nullable = false)
@@ -48,12 +51,4 @@ public class PaymentCard {
 
     @Column(nullable = false, columnDefinition = "boolean default true")
     private Boolean active = Boolean.TRUE;
-
-    @CreationTimestamp
-    @Column(name = "created_at", nullable = false, updatable = false)
-    private Instant createdAt;
-
-    @UpdateTimestamp
-    @Column(name = "updated_at")
-    private Instant updatedAt;
 }

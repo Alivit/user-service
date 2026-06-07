@@ -1,5 +1,6 @@
 package com.minispring.userservice.service.impl;
 
+import com.minispring.userservice.config.JaversConfig.AuditProperties;
 import com.minispring.userservice.dto.AdminUserUpdateDto;
 import com.minispring.userservice.dto.UserCreateDto;
 import com.minispring.userservice.dto.UserParamsDto;
@@ -11,18 +12,19 @@ import com.minispring.userservice.mapper.UserMapper;
 import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.UserRepository;
 import com.minispring.userservice.service.UserService;
+import com.minispring.userservice.service.listener.AuditUpdateEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.javers.core.Javers;
-import org.javers.core.diff.Diff;
 import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
-import org.springframework.cache.annotation.Caching;
+import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Instant;
 import java.util.UUID;
 
 import static com.minispring.userservice.exception.ExceptionAnswer.EMAIL_EXIST;
@@ -34,28 +36,28 @@ import static com.minispring.userservice.exception.ExceptionAnswer.USER_NOT_FOUN
 @Transactional(readOnly = true)
 public class UserServiceImpl implements UserService {
 
+    private final ApplicationEventPublisher eventPublisher;
+    private final AuditProperties auditProperties;
     private final UserRepository userRepository;
     private final UserMapper userMapper;
-    private final Javers javers;
 
     @Transactional
     @Override
     public UserProfileDto create(UserCreateDto userCreateDto) {
-        if (userRepository.existsByEmail(userCreateDto.email())) {
+        try {
+            User user = userMapper.userCreateDtoToUser(userCreateDto);
+            User saved = userRepository.saveAndFlush(user);
+            log.info("User with id {} created successfully Email: {}", saved.getId(), saved.getEmail());
+            return userMapper.userToUserProfileDtoWithoutCards(saved);
+        } catch (DataIntegrityViolationException e) {
             throw new ResourceAlreadyExistsException(String.format(EMAIL_EXIST, userCreateDto.email()));
         }
-        User userBeforeSaving = userMapper.userCreateDtoToUser(userCreateDto);
-        User savedUser = userRepository.saveAndFlush(userBeforeSaving);
-        log.debug("User with id {} created successfully Email: {}", savedUser.getId(), savedUser.getEmail());
-        return userMapper.userToUserProfileDto(savedUser);
     }
 
     @Override
     @Cacheable(value = "user_info", key = "#userId")
     public UserProfileDto getById(UUID userId) {
-        User foundedUser = getExistingUser(userId);
-        log.debug("User with id {} has been found", userId);
-        return userMapper.userToUserProfileDto(foundedUser);
+        return userMapper.userToUserProfileDto(getExistsUserWithCardsById(userId));
     }
 
     @Override
@@ -67,62 +69,90 @@ public class UserServiceImpl implements UserService {
     @Override
     @CacheEvict(value = "user_info", key = "#userId")
     public UserProfileDto update(UUID userId, UserUpdateDto userUpdateDto) {
-        User existingUser = getExistingUser(userId);
-        UserUpdateDto userStateBefore = userMapper.userToUserUpdateDto(existingUser);
-        userMapper.updateUserFromDto(userUpdateDto, existingUser);
-        userRepository.flush();
-        UserUpdateDto userStateAfter = userMapper.userToUserUpdateDto(existingUser);
-        Diff diff = javers.compare(userStateBefore, userStateAfter);
-
-        if (diff.hasChanges()) {
-            log.debug("User {} have changes: {}", userId, diff.prettyPrint());
+        User existingUser = getExistsUserById(userId);
+        if (!auditProperties.isEnabled()) {
+            userMapper.updateUserFromDto(userUpdateDto, existingUser);
+            return userMapper.userToUserProfileDtoWithoutCards(existingUser);
         }
-        return userMapper.userToUserProfileDto(existingUser);
+        return processUpdateWithAudit(existingUser, userUpdateDto);
     }
 
     @Transactional
     @Override
     @CacheEvict(value = "user_info", key = "#userId")
     public UserProfileDto update(UUID userId, AdminUserUpdateDto userUpdateDto) {
-        User existingUser = getExistingUser(userId);
-        AdminUserUpdateDto userStateBefore = userMapper.userToAdminUserUpdateDto(existingUser);
-        userMapper.updateUserFromDto(userUpdateDto, existingUser);
-        userRepository.flush();
-        AdminUserUpdateDto userStateAfter = userMapper.userToAdminUserUpdateDto(existingUser);
-        Diff diff = javers.compare(userStateBefore, userStateAfter);
-
-        if (diff.hasChanges()) {
-            log.debug("User {} have changes: {}", userId, diff.prettyPrint());
+        User existingUser = getExistsUserById(userId);
+        if (!auditProperties.isEnabled()) {
+            userMapper.updateUserFromDto(userUpdateDto, existingUser);
+            return userMapper.userToUserProfileDtoWithoutCards(existingUser);
         }
-        return userMapper.userToUserProfileDto(existingUser);
+        return processUpdateWithAudit(existingUser, userUpdateDto);
     }
 
     @Transactional
     @Override
-    @Caching(evict = {
-            @CacheEvict(value = "user_info", key = "#userId"),
-            @CacheEvict(value = "user_cards", key = "#userId")
-    })
+    @CacheEvict(value = "user_info", key = "#userId")
+    public void delete(UUID userId) {
+        userRepository.delete(getExistsUserWithCardsById(userId));
+        log.info("User {} and all associated cards were permanently deleted", userId);
+    }
+
+    @Transactional
+    @Override
+    @CacheEvict(value = "user_info", key = "#userId")
     public UserProfileDto deactivate(UUID userId) {
-        User existingUser = getExistingUser(userId);
-        existingUser.setActive(false);
-        userRepository.flush();
-        log.debug("User ID: {} has been banned", userId);
-        return userMapper.userToUserProfileDto(existingUser);
+        User user = getExistsUserById(userId);
+        if (user.getActive()) {
+            user.setActive(false);
+            user.setUpdatedAt(Instant.now());
+            log.info("User ID: {} has been banned", userId);
+        }
+        return userMapper.userToUserProfileDtoWithoutCards(user);
     }
 
     @Transactional
     @Override
     @CacheEvict(value = "user_info", key = "#userId")
     public UserProfileDto activate(UUID userId) {
-        User existingUser = getExistingUser(userId);
-        existingUser.setActive(true);
-        userRepository.flush();
-        log.debug("User ID: {} has been unbanned", userId);
-        return userMapper.userToUserProfileDto(existingUser);
+        User user = getExistsUserById(userId);
+        if (!user.getActive()) {
+            user.setActive(true);
+            user.setUpdatedAt(Instant.now());
+            log.info("User ID: {} has been unbanned", userId);
+        }
+        return userMapper.userToUserProfileDtoWithoutCards(user);
     }
 
-    public User getExistingUser(UUID userId) {
+    private User getExistsUserWithCardsById(UUID userId) {
+        return userRepository.findUserWithCardsById(userId)
+                .orElseThrow(() -> new ResourceNotFoundException(String.format(USER_NOT_FOUND, userId)));
+    }
+
+    private UserProfileDto processUpdateWithAudit(User user, UserUpdateDto dto) {
+        UserUpdateDto stateBefore = userMapper.userToUserUpdateDto(user);
+
+        userMapper.updateUserFromDto(dto, user);
+        userRepository.flush();
+
+        UserUpdateDto stateAfter = userMapper.userToUserUpdateDto(user);
+
+        eventPublisher.publishEvent(new AuditUpdateEvent(user.getId(), stateBefore, stateAfter));
+        return userMapper.userToUserProfileDtoWithoutCards(user);
+    }
+
+    private UserProfileDto processUpdateWithAudit(User user, AdminUserUpdateDto dto) {
+        AdminUserUpdateDto stateBefore = userMapper.userToAdminUserUpdateDto(user);
+
+        userMapper.updateUserFromDto(dto, user);
+        userRepository.flush();
+
+        AdminUserUpdateDto stateAfter = userMapper.userToAdminUserUpdateDto(user);
+
+        eventPublisher.publishEvent(new AuditUpdateEvent(user.getId(), stateBefore, stateAfter));
+        return userMapper.userToUserProfileDtoWithoutCards(user);
+    }
+
+    private User getExistsUserById(UUID userId) {
         return userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException(String.format(USER_NOT_FOUND, userId)));
     }

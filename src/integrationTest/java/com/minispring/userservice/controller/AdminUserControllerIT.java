@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import tools.jackson.databind.json.JsonMapper;
@@ -26,6 +27,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.InstanceOfAssertFactories.LIST;
 import static org.instancio.Select.field;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
 @AutoConfigureMockMvc
 public class AdminUserControllerIT extends BaseIntegrationTest {
@@ -42,6 +44,9 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
     @Autowired
     private JsonMapper jsonMapper;
 
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
+
     private static final String BASE_URL = "/api/v1/admin/users";
     private User user;
 
@@ -54,12 +59,11 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
                 .generate(field(User::getEmail), gen -> gen.text().pattern("#c#c#c#c#c#c#c#c@domain.com"))
                 .set(field(User::getActive), true)
                 .set(field(User::getCards), new ArrayList<>())
-                .ignore(field(User.class, "isNewEntity"))
+                .ignore(field(User::getVersion))
                 .create();
 
         user = userRepository.saveAndFlush(user);
     }
-
 
     @AfterEach
     void tearDown() {
@@ -132,7 +136,7 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
                     .set(field(User::getName), "Test")
                     .set(field(User::getSurname), "User")
                     .set(field(User::getCards), new java.util.ArrayList<>())
-                    .ignore(field(User.class, "isNewEntity"))
+                    .ignore(field(User::getVersion))
                     .create();
             userRepository.saveAndFlush(exampleUser);
         }
@@ -282,6 +286,39 @@ public class AdminUserControllerIT extends BaseIntegrationTest {
                     .content(jsonMapper.writeValueAsString(updateDto))
                     .exchange();
 
+            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        }
+    }
+
+    @Nested
+    class DeleteUserTest {
+
+        @Test
+        void deleteShouldReturnNoContentAndPermanentlyDeleteUserWhenUserExists() {
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL  + "/{userId}", user.getId()));
+
+            assertThat(userRepository.existsById(user.getId())).isFalse();
+
+            Boolean deleted = jdbcTemplate.queryForObject(
+                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.getId()
+            );
+
+            assertThat(deleted).isTrue();
+            assertThat(result).hasStatus(HttpStatus.NO_CONTENT);
+        }
+
+        @Test
+        void deleteShouldReturnNotFoundWhenUserDoesNotExist() {
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL  + "/{userId}", UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON));
+
+            assertThat(userRepository.existsById(user.getId())).isTrue();
+
+            Boolean deleted = jdbcTemplate.queryForObject(
+                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.getId()
+            );
+
+            assertThat(deleted).isFalse();
             assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
         }
     }

@@ -6,6 +6,7 @@ import com.minispring.userservice.service.PaymentCardService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -45,13 +46,23 @@ public class UserCardPaymentController {
     }
 
     @GetMapping("/{cardId}")
-    public ResponseEntity<PaymentCardProfileDto> getById(@PathVariable UUID cardId) {
-        return ResponseEntity.ok(paymentCardService.getById(cardId));
+    public ResponseEntity<PaymentCardProfileDto> getById(@RequestAttribute("tokenUserId") UUID userId,
+                                                         @PathVariable UUID cardId) {
+        return ResponseEntity.ok(paymentCardService.getById(userId, cardId));
+    }
+
+    @DeleteMapping("/{cardId}")
+    public ResponseEntity<Void> delete(@RequestAttribute("tokenUserId") UUID userId,
+                                             @PathVariable UUID cardId) {
+
+        paymentCardService.delete(userId, cardId);
+        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/{cardId}/deactivate")
-    public ResponseEntity<PaymentCardProfileDto> deactivate(@PathVariable UUID cardId) {
-        return ResponseEntity.ok(paymentCardService.deactivate(cardId));
+    public ResponseEntity<PaymentCardProfileDto> deactivate(@RequestAttribute("tokenUserId") UUID userId,
+                                                            @PathVariable UUID cardId) {
+        return ResponseEntity.ok(paymentCardService.deactivate(userId, cardId));
     }
 
 }

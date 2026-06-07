@@ -5,6 +5,7 @@ import com.minispring.userservice.dto.PaymentCardCreateDto;
 import com.minispring.userservice.dto.PaymentCardProfileDto;
 import com.minispring.userservice.dto.PaymentCardUpdateDto;
 import com.minispring.userservice.model.User;
+import com.minispring.userservice.repository.PaymentCardRepository;
 import com.minispring.userservice.repository.UserRepository;
 import com.minispring.userservice.service.PaymentCardService;
 import org.instancio.Instancio;
@@ -18,7 +19,9 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
+import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.YearMonth;
@@ -29,6 +32,7 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.InstanceOfAssertFactories.LIST;
 import static org.instancio.Select.field;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 
 @AutoConfigureMockMvc
 public class AdminPaymentCardControllerIT extends BaseIntegrationTest {
@@ -43,24 +47,36 @@ public class AdminPaymentCardControllerIT extends BaseIntegrationTest {
     private PaymentCardService paymentCardService;
 
     @Autowired
+    private PaymentCardRepository paymentCardRepository;
+
+    @Autowired
     private JsonMapper jsonMapper;
 
     private static final String BASE_URL = "/api/v1/admin/cards";
     private User user;
+    private PaymentCardProfileDto card;
 
     @BeforeEach
-    public void setUpUser() {
+    public void setUpUser(TestInfo testInfo) {
         UUID authServiceId = Instancio.create(UUID.class);
-
         user = Instancio.of(User.class)
                 .set(field(User::getId), authServiceId)
                 .generate(field(User::getEmail), gen -> gen.text().pattern("#c#c#c#c#c#c#c#c@domain.com"))
                 .set(field(User::getActive), true)
-                .set(field(User::getCards), new ArrayList<>()) // <-- Очищаем дефолтные рандомные карточки
-                .ignore(field(User.class, "isNewEntity"))
+                .set(field(User::getCards), new ArrayList<>())
+                .ignore(field(User::getVersion))
+                .create();
+
+        if (testInfo.getTags().contains("skipInit")) {
+            return;
+        }
+
+        PaymentCardCreateDto createDto = Instancio.of(PaymentCardCreateDto.class)
+                .set(field(PaymentCardCreateDto::number), "4000123456789010")
                 .create();
 
         user = userRepository.saveAndFlush(user);
+        card = paymentCardService.create(user.getId(), createDto);
     }
 
     @AfterEach
@@ -76,14 +92,10 @@ public class AdminPaymentCardControllerIT extends BaseIntegrationTest {
             if (testInfo.getTags().contains("skipInit")) {
                 return;
             }
-            PaymentCardCreateDto firstCard = Instancio.of(PaymentCardCreateDto.class)
-                    .generate(field(PaymentCardCreateDto::number), gen -> gen.text().pattern("4444#d#d#d#d#d#d#d#d#d#d#d#d"))
-                    .create();
             PaymentCardCreateDto secondCard = Instancio.of(PaymentCardCreateDto.class)
                     .generate(field(PaymentCardCreateDto::number), gen -> gen.text().pattern("5555#d#d#d#d#d#d#d#d#d#d#d#d"))
                     .create();
 
-            paymentCardService.create(user.getId(), firstCard);
             paymentCardService.create(user.getId(), secondCard);
         }
 
@@ -94,7 +106,7 @@ public class AdminPaymentCardControllerIT extends BaseIntegrationTest {
                     .bodyJson()
                     .hasPath("$.content")
                     .hasPathSatisfying("$.page.totalElements", total -> assertThat(total).isEqualTo(2))
-                    .hasPathSatisfying("$.page.size", size -> assertThat(size).isEqualTo(10)); // Проверяем дефолтный @PageableDefault size
+                    .hasPathSatisfying("$.page.size", size -> assertThat(size).isEqualTo(10));
         }
 
         @Test
@@ -125,14 +137,10 @@ public class AdminPaymentCardControllerIT extends BaseIntegrationTest {
 
         @Test
         void getUserCardsShouldReturnListOfCardsForUser() {
-            PaymentCardCreateDto firstCard = Instancio.of(PaymentCardCreateDto.class)
-                    .generate(field(PaymentCardCreateDto::number), gen -> gen.text().pattern("4444#d#d#d#d#d#d#d#d#d#d#d#d"))
-                    .create();
             PaymentCardCreateDto secondCard = Instancio.of(PaymentCardCreateDto.class)
                     .generate(field(PaymentCardCreateDto::number), gen -> gen.text().pattern("5555#d#d#d#d#d#d#d#d#d#d#d#d"))
                     .create();
 
-            paymentCardService.create(user.getId(), firstCard);
             paymentCardService.create(user.getId(), secondCard);
 
             assertThat(mockMvcTester.get().uri(BASE_URL + "/user/{userId}", user.getId()))
@@ -142,6 +150,7 @@ public class AdminPaymentCardControllerIT extends BaseIntegrationTest {
         }
 
         @Test
+        @Tag("skipInit")
         void getUserCardsShouldReturnEmptyListWhenUserHasNoCards() {
             assertThat(mockMvcTester.get().uri(BASE_URL + "/user/{userId}", user.getId()))
                     .hasStatusOk()
@@ -152,17 +161,6 @@ public class AdminPaymentCardControllerIT extends BaseIntegrationTest {
 
     @Nested
     class UpdateCardTest {
-
-        private PaymentCardProfileDto card;
-
-        @BeforeEach
-        void init() {
-            PaymentCardCreateDto createDto = Instancio.of(PaymentCardCreateDto.class)
-                    .set(field(PaymentCardCreateDto::number), "4000123456789010")
-                    .create();
-
-            card = paymentCardService.create(user.getId(), createDto);
-        }
 
         @Test
         void updateShouldReturnPaymentCardProfileDtoWithUpdatedNumber() {
@@ -248,6 +246,31 @@ public class AdminPaymentCardControllerIT extends BaseIntegrationTest {
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(jsonMapper.writeValueAsString(updateDto)))
                     .hasStatus(HttpStatus.NOT_FOUND);
+        }
+    }
+
+    @Nested
+    class DeleteCardTest {
+
+        @Test
+        void deleteShouldHardDeleteCardButLeaveUserIntactWhenCardExists() {
+            UUID cardId = card.id();
+
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL + "/{cardId}", cardId)
+                    .contentType(MediaType.APPLICATION_JSON));
+
+            assertThat(paymentCardRepository.existsById(cardId)).isFalse();
+            assertThat(userRepository.existsById(user.getId())).isTrue();
+            assertThat(result).hasStatus(HttpStatus.NO_CONTENT);
+        }
+
+        @Test
+        void deleteShouldReturnNotFoundWhenCardDoesNotExist() {
+            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL + "/{cardId}", UUID.randomUUID())
+                    .contentType(MediaType.APPLICATION_JSON));
+
+            assertThat(userRepository.existsById(user.getId())).isTrue();
+            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
         }
     }
 

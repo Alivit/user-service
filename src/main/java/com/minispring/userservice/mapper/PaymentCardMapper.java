@@ -27,6 +27,9 @@ public interface PaymentCardMapper {
 
     PaymentCardProfileDto paymentCardToPaymentCardProfileDto(PaymentCard paymentCard);
 
+    @Mapping(target = "user", ignore = true)
+    PaymentCardProfileDto CardToPaymentCardProfileDtoWithoutUser(PaymentCard card);
+
     PaymentCardUpdateDto paymentCardToPaymentCardUpdateDto(PaymentCard paymentCard);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)

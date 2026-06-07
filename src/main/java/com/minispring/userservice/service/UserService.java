@@ -16,13 +16,13 @@ public interface UserService {
 
     UserProfileDto getById(UUID userId);
 
-    User getExistingUser(UUID userId);
-
     Page<UserProfileDto> getAllBy(UserParamsDto userParamsDto, Pageable pageable);
 
     UserProfileDto update(UUID userId, AdminUserUpdateDto adminUpdateDto);
 
     UserProfileDto update(UUID userId, UserUpdateDto userUpdateDto);
+
+    void delete(UUID userId);
 
     UserProfileDto deactivate(UUID userId);
 

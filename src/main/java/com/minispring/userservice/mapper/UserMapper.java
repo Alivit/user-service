@@ -8,6 +8,7 @@ import com.minispring.userservice.model.User;
 import org.mapstruct.BeanMapping;
 import org.mapstruct.Builder;
 import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
 import org.mapstruct.MappingConstants;
 import org.mapstruct.MappingTarget;
 import org.mapstruct.NullValuePropertyMappingStrategy;
@@ -25,6 +26,9 @@ public interface UserMapper {
     AdminUserUpdateDto userToAdminUserUpdateDto(User user);
 
     UserProfileDto userToUserProfileDto(User user);
+
+    @Mapping(target = "cards", ignore = true)
+    UserProfileDto userToUserProfileDtoWithoutCards(User user);
 
     @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)
     void updateUserFromDto(UserUpdateDto dto, @MappingTarget User user);

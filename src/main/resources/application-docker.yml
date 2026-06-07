@@ -1,13 +1,34 @@
 spring:
+  datasource:
+    url: ${DOCKER_DB_URL}
+    username: ${DOCKER_DB_USER}
+    password: ${DOCKER_DB_PASSWORD}
   jpa:
     show-sql: false
     properties:
       hibernate:
         format_sql: false
+        generate_statistics: ${HIBERNATE_STATISTICS_ENABLED:false}
   data:
     redis:
       host: redis
+decorator:
+  datasource:
+    datasource-proxy:
+      query:
+        enable-logging: ${DB_QUERY_LOGGING_ENABLED:false}
+      slow-query:
+        enable-logging: ${DB_SLOW_QUERY_LOGGING_ENABLED:false}
+        log-level: warn
 logging:
   level:
-    com.minispring.userservice: INFO
-    org.hibernate.SQL: ERROR
+    com.minispring.userservice: ${LOG_LEVEL_APP:INFO}
+    org.hibernate.SQL: ${LOG_LEVEL_HIBERNATE:OFF}
+    org.zalando.logbook: ${LOG_LEVEL_LOGBOOK:OFF}
+app:
+  cache:
+    lifecycle:
+      default: ${CACHE_DEFAULT:1h}
+      user-info: ${CACHE_USER_INFO:24h}
+  audit:
+    enabled: ${APP_AUDIT_ENABLED:false}
