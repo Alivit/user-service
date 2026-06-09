@@ -1,8 +1,8 @@
 package com.minispring.userservice.controller.handler;
 
 import com.minispring.userservice.exception.BadRequestException;
-import com.minispring.userservice.exception.ResourceAlreadyExistsException;
 import com.minispring.userservice.exception.ErrorResponse;
+import com.minispring.userservice.exception.ResourceAlreadyExistsException;
 import com.minispring.userservice.exception.ResourceNotFoundException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -19,7 +19,7 @@ import java.util.stream.Collectors;
 public class GlobalExceptionHandler {
 
     @ExceptionHandler(ResourceNotFoundException.class)
-    public ResponseEntity<ErrorResponse> handleNotFound(ResourceNotFoundException ex) {
+    public ResponseEntity<ErrorResponse> handleNotFoundException(ResourceNotFoundException ex) {
         log.warn("Resource not found: {}", ex.getMessage());
 
         ErrorResponse response = ErrorResponse.of(
@@ -31,7 +31,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)
-    public ResponseEntity<ErrorResponse> handleValidationErrors(MethodArgumentNotValidException ex) {
+    public ResponseEntity<ErrorResponse> handleValidationException(MethodArgumentNotValidException ex) {
         log.warn("Validation error: {}", ex.getMessage());
 
         String detailedMessage = ex.getBindingResult()
@@ -49,7 +49,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(IllegalStateException.class)
-    public ResponseEntity<ErrorResponse> handleIllegalState(IllegalStateException ex) {
+    public ResponseEntity<ErrorResponse> handleIllegalStateException(IllegalStateException ex) {
         log.warn("Illegal state: {}", ex.getMessage());
 
         ErrorResponse response = ErrorResponse.of(
@@ -74,7 +74,7 @@ public class GlobalExceptionHandler {
     }
 
     @ExceptionHandler(ResourceAlreadyExistsException.class)
-    public ResponseEntity<ErrorResponse> handleResourceAlreadyExistsException(ResourceAlreadyExistsException ex) {
+    public ResponseEntity<ErrorResponse> handleAlreadyExistsException(ResourceAlreadyExistsException ex) {
         log.warn("Resource already exists exception caught: {}", ex.getMessage());
 
         ErrorResponse response = ErrorResponse.of(

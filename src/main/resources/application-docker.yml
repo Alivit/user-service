@@ -11,7 +11,17 @@ spring:
         generate_statistics: ${HIBERNATE_STATISTICS_ENABLED:false}
   data:
     redis:
-      host: redis
+      host: ${REDIS_HOST_DOCKER:redis}
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: http://keycloak:8080/realms/dev/protocol/openid-connect/certs
+  grpc:
+    client:
+      channels:
+        auth-service:
+          address: static://auth-service:9090
 decorator:
   datasource:
     datasource-proxy:

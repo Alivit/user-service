@@ -16,7 +16,7 @@ services:
       - "5432:5432"
 
   redis:
-    image: redis:7.2-alpine
+    image: redis:7.4-alpine
     container_name: redis
     ports:
       - "6379:6379"
@@ -24,14 +24,13 @@ services:
   user-service:
     build: .
     container_name: user-service
-    ports:
-      - "8080:8080"
     depends_on:
         - user-postgres
         - redis
     env_file:
       - '.env'
     environment:
+      SERVER_PORT: 8081
       SPRING_PROFILES_ACTIVE: docker
       DB_QUERY_LOGGING_ENABLED: ${DB_QUERY_LOGGING_ENABLED}
       DB_SLOW_QUERY_LOGGING_ENABLED: ${DB_SLOW_QUERY_LOGGING_ENABLED}
@@ -39,6 +38,11 @@ services:
       LOG_LEVEL_HIBERNATE: ${LOG_LEVEL_HIBERNATE}
       LOG_LEVEL_LOGBOOK: ${LOG_LEVEL_LOGBOOK}
       APP_AUDIT_ENABLED: ${APP_AUDIT_ENABLED}
-
+    ports:
+      - "8081:8081"
+networks:
+  default:
+    name: minispring-network
+    external: true
 volumes:
   pg_data:

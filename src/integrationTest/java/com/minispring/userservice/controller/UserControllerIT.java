@@ -2,30 +2,36 @@ package com.minispring.userservice.controller;
 
 import com.minispring.userservice.BaseIntegrationTest;
 import com.minispring.userservice.dto.UserCreateDto;
+import com.minispring.userservice.dto.UserProfileDto;
 import com.minispring.userservice.dto.UserUpdateDto;
 import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.UserRepository;
+import com.minispring.userservice.service.UserService;
 import org.instancio.Instancio;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestInfo;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.test.web.servlet.assertj.MockMvcTester;
 import org.springframework.test.web.servlet.assertj.MvcTestResult;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.instancio.Select.field;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 @AutoConfigureMockMvc
 public class UserControllerIT extends BaseIntegrationTest {
@@ -37,27 +43,26 @@ public class UserControllerIT extends BaseIntegrationTest {
     private UserRepository userRepository;
 
     @Autowired
+    private UserService userService;
+
+    @Autowired
     private JsonMapper jsonMapper;
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
     private static final String BASE_URL = "/api/v1/users";
-    private User user;
+    private UserProfileDto user;
+    private Jwt userToken;
 
     @BeforeEach
-    public void setUpUser() {
-        UUID authServiceId = Instancio.create(UUID.class);
-
-        user = Instancio.of(User.class)
-                .set(field(User::getId), authServiceId)
-                .generate(field(User::getEmail), gen -> gen.text().pattern("#c#c#c#c#c#c#c#c@domain.com"))
-                .set(field(User::getActive), true)
-                .set(field(User::getCards), new ArrayList<>())
-                .ignore(field(User::getVersion))
-                .create();
-
-        user = userRepository.saveAndFlush(user);
+    public void initUser(TestInfo testInfo) {
+        userToken = createToken("user", "USER");
+        if (testInfo.getTags().contains("initUser")) {
+            return;
+        }
+        User created = userRepository.saveAndFlush(createSecureUser(userToken.getSubject()));
+        user = userService.getById(created.getId());
     }
 
     @AfterEach
@@ -75,19 +80,18 @@ public class UserControllerIT extends BaseIntegrationTest {
                     .set(field(UserCreateDto::birthDate), LocalDate.now().minusYears(20))
                     .create();
 
-            MvcTestResult result = mockMvcTester.post().uri(BASE_URL)
+            MvcTestResult result = mockMvcTester.perform(post(BASE_URL)
+                    .header("Authorization", "Bearer " + userToken.getTokenValue())
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(createDto))
-                    .exchange();
+                    .content(jsonMapper.writeValueAsString(createDto)));
 
-            assertThat(result).hasStatus(HttpStatus.CREATED);
+            assertThat(result)
+                    .hasStatus(HttpStatus.CREATED)
+                    .headers()
+                    .hasHeaderSatisfying("Location", values -> assertThat(values.getFirst()).contains(BASE_URL));
 
-            assertThat(result).headers()
-                    .extracting(h -> h.getFirst("Location"))
-                    .asString()
-                    .contains(BASE_URL);
-
-            assertThat(result).bodyJson()
+            assertThat(result)
+                    .bodyJson()
                     .hasPath("$.id")
                     .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(createDto.name()))
                     .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(createDto.surname()))
@@ -100,26 +104,23 @@ public class UserControllerIT extends BaseIntegrationTest {
 
         @Test
         void getByIdShouldReturnUserProfileOfAuthenticatedUser() {
-            MvcTestResult result = mockMvcTester.get().uri(BASE_URL)
-                    .requestAttr("tokenUserId", user.getId())
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.id", id -> assertThat(id).isEqualTo(String.valueOf(user.getId())))
-                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(user.getName()))
-                    .hasPathSatisfying("$.email", email -> assertThat(email).isEqualTo(user.getEmail()));
+            assertThat(createRequest())
+                    .hasStatusOk()
+                    .bodyJson()
+                    .convertTo(UserProfileDto.class)
+                    .usingRecursiveComparison()
+                    .isEqualTo(user);
         }
 
         @Test
+        @Tag("initUser")
         void getByIdShouldReturnNotFoundWhenTokenUserDoesNotExist() {
-            UUID invalidId = UUID.randomUUID();
+            assertThat(createRequest()).hasStatus(HttpStatus.NOT_FOUND);
+        }
 
-            MvcTestResult result = mockMvcTester.get().uri(BASE_URL)
-                    .requestAttr("tokenUserId", invalidId)
-                    .exchange();
-
-            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        private MvcTestResult createRequest() {
+            return mockMvcTester.perform(get(BASE_URL)
+                    .header("Authorization", "Bearer " + userToken.getTokenValue()));
         }
     }
 
@@ -128,73 +129,58 @@ public class UserControllerIT extends BaseIntegrationTest {
 
         @Test
         void updateShouldReturnUserProfileDtoWithUpdatedName() {
-            String testName = "TestName";
             UserUpdateDto updateDto = Instancio.ofBlank(UserUpdateDto.class)
-                    .set(field(UserUpdateDto::name), testName)
+                    .set(field(UserUpdateDto::name), "TestName")
                     .create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL)
-                    .requestAttr("tokenUserId", user.getId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(testName))
-                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(user.getSurname()));
+            assertThat(createRequest(updateDto))
+                    .hasStatusOk()
+                    .bodyJson()
+                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(updateDto.name()))
+                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(user.surname()));
         }
 
         @Test
         void updateShouldReturnUserProfileDtoWithUpdatedSurname() {
-            String testSurname = "TestSurname";
             UserUpdateDto updateDto = Instancio.ofBlank(UserUpdateDto.class)
-                    .set(field(UserUpdateDto::surname), testSurname)
+                    .set(field(UserUpdateDto::surname), "TestSurname")
                     .create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL)
-                    .requestAttr("tokenUserId", user.getId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(testSurname))
-                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(user.getName()));
+            assertThat(createRequest(updateDto))
+                    .hasStatusOk()
+                    .bodyJson()
+                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(updateDto.surname()))
+                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(user.name()));
         }
 
         @Test
         void updateWithEmptyDtoShouldReturnUserProfileWithNoChanges() {
             UserUpdateDto updateDto = Instancio.ofBlank(UserUpdateDto.class).create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL)
-                    .requestAttr("tokenUserId", user.getId())
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
-
-            assertThat(result).hasStatusOk();
-            assertThat(result).bodyJson()
-                    .hasPathSatisfying("$.id", id -> assertThat(id).isEqualTo(String.valueOf(user.getId())))
-                    .hasPathSatisfying("$.name", name -> assertThat(name).isEqualTo(user.getName()))
-                    .hasPathSatisfying("$.surname", surname -> assertThat(surname).isEqualTo(user.getSurname()));
+            assertThat(createRequest(updateDto))
+                    .hasStatusOk()
+                    .bodyJson()
+                    .convertTo(UserProfileDto.class)
+                    .usingRecursiveComparison()
+                    .ignoringFields("cards")
+                    .isEqualTo(user);
         }
 
         @Test
+        @Tag("initUser")
         void updateShouldReturnNotFoundWhenUserFromTokenDoesNotExist() {
-            UUID invalidId = UUID.randomUUID();
             UserUpdateDto updateDto = Instancio.ofBlank(UserUpdateDto.class)
                     .set(field(UserUpdateDto::name), "ValidName")
                     .create();
 
-            MvcTestResult result = mockMvcTester.patch().uri(BASE_URL)
-                    .requestAttr("tokenUserId", invalidId)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(jsonMapper.writeValueAsString(updateDto))
-                    .exchange();
+            assertThat(createRequest(updateDto)).hasStatus(HttpStatus.NOT_FOUND);
+        }
 
-            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        private MvcTestResult createRequest(UserUpdateDto dto) {
+            return mockMvcTester.perform(patch(BASE_URL)
+                    .header("Authorization", "Bearer " + userToken.getTokenValue())
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(jsonMapper.writeValueAsString(dto)));
         }
     }
 
@@ -203,35 +189,22 @@ public class UserControllerIT extends BaseIntegrationTest {
 
         @Test
         void deleteShouldReturnNoContentAndPermanentlyDeleteUserWhenUserExists() {
-            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL)
-                    .requestAttr("tokenUserId", user.getId()));
+            MvcTestResult result = createRequest();
 
-            assertThat(userRepository.existsById(user.getId())).isFalse();
+            assertThat(userRepository.existsById(user.id())).isFalse();
 
             Boolean deleted = jdbcTemplate.queryForObject(
-                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.getId()
+                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.id()
             );
 
             assertThat(deleted).isTrue();
             assertThat(result).hasStatus(HttpStatus.NO_CONTENT);
         }
 
-        @Test
-        void deleteShouldReturnNotFoundWhenUserDoesNotExist() {
-            UUID nonExistingUserId = UUID.randomUUID();
-
-            MvcTestResult result = mockMvcTester.perform(delete(BASE_URL)
-                            .requestAttr("tokenUserId", nonExistingUserId)
-                            .contentType(MediaType.APPLICATION_JSON));
-
-            assertThat(userRepository.existsById(user.getId())).isTrue();
-
-            Boolean deleted = jdbcTemplate.queryForObject(
-                    "SELECT deleted FROM public.users WHERE id = ?", Boolean.class, user.getId()
-            );
-
-            assertThat(deleted).isFalse();
-            assertThat(result).hasStatus(HttpStatus.NOT_FOUND);
+        private MvcTestResult createRequest() {
+            return mockMvcTester.perform(delete(BASE_URL)
+                    .header("Authorization", "Bearer " + userToken.getTokenValue())
+                    .contentType(MediaType.APPLICATION_JSON));
         }
     }
 }

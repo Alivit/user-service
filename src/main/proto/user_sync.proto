@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package com.minispring.grpc;
+
+option java_multiple_files = true;
+option java_package = "com.minispring.grpc";
+option java_outer_classname = "UserSyncProto";
+
+service AuthGrpcService {
+  rpc ChangeStatus (UserStatusRequest) returns (UserStatusResponse);
+}
+
+message UserStatusRequest {
+  string userId = 1;
+  bool enabled = 2;
+}
+
+message UserStatusResponse {
+  bool success = 1;
+}

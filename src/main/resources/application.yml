@@ -3,6 +3,9 @@ spring:
     active: local
   application:
     name: user-service
+  threads:
+    virtual:
+      enabled: true
   jpa:
     hibernate:
       ddl-auto: none
