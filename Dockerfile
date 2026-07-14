@@ -1,23 +1,22 @@
 FROM gradle:jdk25 AS build
 WORKDIR /app
 
-ENV GRADLE_OPTS="-Xmx1536m -XX:MaxMetaspaceSize=384m -Dorg.gradle.jvmargs=-Xmx1536m"
+ENV GRADLE_OPTS="-Xmx2g -XX:MaxMetaspaceSize=512m -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true"
 
 COPY build.gradle settings.gradle ./
 RUN --mount=type=cache,target=/root/.gradle/caches \
-    gradle dependencies --no-daemon --max-workers=1
+    gradle dependencies --no-daemon
 
 COPY src ./src
 RUN --mount=type=cache,target=/root/.gradle/caches \
-    gradle clean generateProto bootJar --no-daemon -x test --max-workers=1
+    gradle clean generateProto bootJar --no-daemon -x test \
+    && find build/libs/ -name "*.jar" ! -name "*plain.jar" -exec mv {} build/libs/app.jar \;
 
-RUN mv build/libs/$(ls build/libs/ | grep -v plain) /app/app.jar
-
-FROM eclipse-temurin:25-jdk AS optimizer
+FROM eclipse-temurin:25-jre AS extractor
 WORKDIR /app
-COPY --from=build /app/app.jar app.jar
 
-RUN jar -xf app.jar && rm app.jar
+COPY --from=build /app/build/libs/app.jar app.jar
+RUN java -Djarmode=tools -jar app.jar extract --layers --destination extracted
 
 FROM eclipse-temurin:25-jre
 WORKDIR /app
@@ -25,15 +24,17 @@ WORKDIR /app
 RUN addgroup --system spring && adduser --system --ingroup spring --no-create-home spring
 USER spring:spring
 
-COPY --from=optimizer /app/BOOT-INF/lib/ ./BOOT-INF/lib/
-COPY --from=optimizer /app/META-INF/ ./META-INF/
-COPY --from=optimizer /app/BOOT-INF/classes/ ./BOOT-INF/classes/
+COPY --from=extractor /app/extracted/dependencies/ ./
+COPY --from=extractor /app/extracted/spring-boot-loader/ ./
+COPY --from=extractor /app/extracted/snapshot-dependencies/ ./
+COPY --from=extractor /app/extracted/application/ ./
 
-EXPOSE 8081
+EXPOSE 8083
+EXPOSE 9091
 
 ENTRYPOINT [ \
     "java", \
-    "-XX:+UseG1GC", \
-    "-cp", "BOOT-INF/classes:BOOT-INF/lib/*", \
-    "com.minispring.userservice.UserServiceApplication" \
+    "-XX:+UseZGC", \
+    "-XX:TieredStopAtLevel=1", \
+    "-jar", "app.jar" \
 ]

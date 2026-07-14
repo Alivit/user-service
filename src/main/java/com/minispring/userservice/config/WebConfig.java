@@ -16,5 +16,4 @@ public class WebConfig implements WebMvcConfigurer {
             return trimmed.isEmpty() ? null : trimmed;
         });
     }
-
 }

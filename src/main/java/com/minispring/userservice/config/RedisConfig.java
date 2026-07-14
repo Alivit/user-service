@@ -1,6 +1,7 @@
 package com.minispring.userservice.config;
 
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.cache.autoconfigure.RedisCacheManagerBuilderCustomizer;
 import org.springframework.cache.annotation.EnableCaching;
@@ -14,8 +15,6 @@ import org.springframework.scheduling.annotation.EnableAsync;
 import tools.jackson.databind.DefaultTyping;
 import tools.jackson.databind.jsontype.BasicPolymorphicTypeValidator;
 import tools.jackson.databind.jsontype.PolymorphicTypeValidator;
-
-import java.time.Duration;
 
 @Configuration
 @EnableCaching
@@ -38,14 +37,8 @@ public class RedisConfig {
                 .build();
 
         GenericJacksonJsonRedisSerializer jsonSerializer = GenericJacksonJsonRedisSerializer.builder()
-                .customize(builder -> builder
-                        .findAndAddModules()
-                        .activateDefaultTyping(
-                                ptv,
-                                DefaultTyping.NON_FINAL_AND_RECORDS,
-                                JsonTypeInfo.As.PROPERTY
-                        )
-                )
+                .customize(builder -> builder.findAndAddModules()
+                        .activateDefaultTyping(ptv, DefaultTyping.NON_FINAL_AND_RECORDS, JsonTypeInfo.As.PROPERTY))
                 .build();
 
         return RedisCacheConfiguration.defaultCacheConfig()
@@ -56,10 +49,9 @@ public class RedisConfig {
     }
 
     @Bean
-    public RedisCacheManagerBuilderCustomizer redisCacheManagerBuilderCustomizer(RedisCacheConfiguration defaultCacheConfig) {
-        return (builder) -> builder
-                .transactionAware()
-                .withCacheConfiguration("user_info", defaultCacheConfig.entryTtl(userInfo));
+    public RedisCacheManagerBuilderCustomizer redisCacheManagerBuilderCustomizer(
+            RedisCacheConfiguration defaultCacheConfig) {
+        return (builder) ->
+                builder.transactionAware().withCacheConfiguration("user_info", defaultCacheConfig.entryTtl(userInfo));
     }
-
 }

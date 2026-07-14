@@ -1,0 +1,8 @@
+method,route
+GET,/api/v1/admin/users
+GET,/api/v1/admin/users/123e4567-e89b-12d3-a456-426614174000
+PATCH,/api/v1/admin/users/123e4567-e89b-12d3-a456-426614174000
+DELETE,/api/v1/admin/users/123e4567-e89b-12d3-a456-426614174000
+POST,/api/v1/admin/users/123e4567-e89b-12d3-a456-426614174000/cards
+POST,/api/v1/admin/users/123e4567-e89b-12d3-a456-426614174000/activate
+POST,/api/v1/admin/users/123e4567-e89b-12d3-a456-426614174000/deactivate

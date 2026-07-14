@@ -1,0 +1,4 @@
+method,route
+GET,/api/v1/users
+PATCH,/api/v1/users
+DELETE,/api/v1/users

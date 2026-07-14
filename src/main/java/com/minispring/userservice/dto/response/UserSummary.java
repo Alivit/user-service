@@ -1,11 +1,10 @@
-package com.minispring.userservice.dto;
+package com.minispring.userservice.dto.response;
 
 import java.time.Instant;
 import java.time.LocalDate;
-import java.util.List;
 import java.util.UUID;
 
-public record UserProfileDto(
+public record UserSummary(
         UUID id,
         String name,
         String surname,
@@ -13,7 +12,4 @@ public record UserProfileDto(
         String email,
         Boolean active,
         Instant createdAt,
-        Instant updatedAt,
-        List<PaymentCardShortDto> cards
-) {
-}
+        Instant updatedAt) {}

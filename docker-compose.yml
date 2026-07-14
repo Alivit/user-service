@@ -1,6 +1,6 @@
 services:
   user-postgres:
-    image: postgres:18-alpine
+    image: postgres:${POSTGRES_VERSION}
     container_name: user-postgres
     environment:
       POSTGRES_DB: ${USER_DB_NAME}
@@ -13,13 +13,23 @@ services:
         - ./docker-init/init-app-user.sh:/docker-entrypoint-initdb.d/init-app-user.sh
         - pg_data:/var/lib/postgresql
     ports:
-      - "${USER_DB_EXTERNAL_PORT}:5432"
+      - "${USER_POSTGRES_PORT}:5432"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    command: ["postgres","-c", "shared_buffers=256MB","-c", "synchronous_commit=off","-c", "max_connections=50"]
 
   redis:
-    image: redis:7.4-alpine
+    image: redis:${REDIS}
     container_name: redis
     ports:
-      - "${REDIS_EXTERNAL_PORT}:6379"
+      - "${REDIS_PORT}:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    command: [ "redis-server", "--maxmemory", "400mb", "--maxmemory-policy", "allkeys-lru" ]
 
   user-service:
     build: .
@@ -27,17 +37,12 @@ services:
     env_file:
       - '.env'
     environment:
-      SERVER_PORT: ${USER_SERVICE_PORT}
       SPRING_PROFILES_ACTIVE: docker
-      APP_INTERNAL_SECRET: ${APP_INTERNAL_SECRET}
-      DB_QUERY_LOGGING_ENABLED: ${DB_QUERY_LOGGING_ENABLED}
-      DB_SLOW_QUERY_LOGGING_ENABLED: ${DB_SLOW_QUERY_LOGGING_ENABLED}
-      LOG_LEVEL_APP: ${LOG_LEVEL_APP}
-      LOG_LEVEL_HIBERNATE: ${LOG_LEVEL_HIBERNATE}
-      LOG_LEVEL_LOGBOOK: ${LOG_LEVEL_LOGBOOK}
-      APP_AUDIT_ENABLED: ${APP_AUDIT_ENABLED}
     ports:
       - "${USER_SERVICE_PORT}:${USER_SERVICE_PORT}"
+      - "${USER_GRPC_SERVER_PORT}:${USER_GRPC_SERVER_PORT}"
+    volumes:
+      - ../auth-service/certs:/app/certs:ro
     depends_on:
       - user-postgres
       - redis

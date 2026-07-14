@@ -1,4 +1,5 @@
 databaseChangeLog:
+  - logicalFilePath: db/changelog/changelogs/create-payment_cards-table.yml
   - changeSet:
       id: 2
       author: Chuiko Vitali
@@ -28,6 +29,11 @@ databaseChangeLog:
               - column:
                   name: number
                   type: varchar(50)
+                  constraints:
+                    nullable: false
+              - column:
+                  name: card_hash
+                  type: varchar(64)
                   constraints:
                     unique: true
                     nullable: false

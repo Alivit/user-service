@@ -2,15 +2,16 @@ package com.minispring.userservice.client;
 
 import com.minispring.grpc.service.AuthGrpcServiceGrpc;
 import com.minispring.grpc.service.DeleteUserRequest;
-import com.minispring.grpc.service.DeleteUserResponse;
 import com.minispring.grpc.service.UserStatusRequest;
-import com.minispring.grpc.service.UserStatusResponse;
+import com.minispring.userservice.exception.ResourceNotFoundException;
+import io.grpc.Status;
+import io.grpc.StatusRuntimeException;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Supplier;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 @Slf4j
 @Service
@@ -26,29 +27,33 @@ public class AuthGrpcClient {
                 .setUserId(userId.toString())
                 .setEnabled(enabled)
                 .build();
-        try {
-            UserStatusResponse response = authGrpc.withDeadlineAfter(12, TimeUnit.SECONDS).changeStatus(request);
-            if (response.getSuccess()) {
-                log.debug("Status sync successful for user: {}", userId);
-            }
-        } catch (Exception e) {
-            throw new RuntimeException("gRPC auth-service sync failed", e);
-        }
+
+        executeGrpcCall(() -> authGrpc.withDeadlineAfter(3, TimeUnit.SECONDS).changeStatus(request), userId);
+        log.debug("Status sync successful for user: {}", userId);
     }
 
     public void deleteUser(UUID userId) {
         log.debug("Sending hard-delete request to Keycloak for user: {}", userId);
 
-        DeleteUserRequest request = DeleteUserRequest.newBuilder()
-                .setUserId(userId.toString())
-                .build();
+        DeleteUserRequest request =
+                DeleteUserRequest.newBuilder().setUserId(userId.toString()).build();
+
+        executeGrpcCall(() -> authGrpc.withDeadlineAfter(3, TimeUnit.SECONDS).deleteUser(request), userId);
+        log.debug("User {} successfully hard-deleted from Keycloak", userId);
+    }
+
+    private <T> void executeGrpcCall(Supplier<T> grpcCall, UUID userId) {
         try {
-            DeleteUserResponse response = authGrpc.withDeadlineAfter(12, TimeUnit.SECONDS).deleteUser(request);
-            if (!response.getSuccess()) {
-                throw new RuntimeException("Keycloak returned success=false during user deletion");
+            grpcCall.get();
+        } catch (StatusRuntimeException ex) {
+            if (ex.getStatus().getCode() == Status.Code.NOT_FOUND) {
+                throw new ResourceNotFoundException("User " + userId + " not found in Keycloak");
             }
-        } catch (Exception e) {
-            throw new RuntimeException("gRPC Keycloak delete operation failed", e);
+            log.error(
+                    "CRITICAL: gRPC call to auth-service failed. Status: {}, Reason: {}",
+                    ex.getStatus().getCode(),
+                    ex.getMessage());
+            throw ex;
         }
     }
 }

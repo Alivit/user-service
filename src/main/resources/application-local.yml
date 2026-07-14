@@ -3,7 +3,7 @@ spring:
     activate:
       on-profile: local
   datasource:
-    url: ${USER_DB_LOCAL_URL}
+    url: jdbc:postgresql://localhost:5432/${USER_DB_NAME}?currentSchema=${USER_DB_SCHEMA}
     username: ${USER_DB_USERNAME}
     password: ${USER_DB_PASSWORD}
   jpa:
@@ -13,13 +13,15 @@ spring:
         format_sql: true
   data:
     redis:
-      host: ${REDIS_HOST_LOCAL:localhost}
-      port: ${REDIS_PORT:6379}
+      host: localhost
+      port: ${REDIS_PORT}
   security:
     oauth2:
       resourceserver:
         jwt:
-          jwk-set-uri: ${APP_JWK_SET_URI_LOCAL}
+          jwk-set-uri: https://localhost:${KC_HTTPS_PORT}/realms/${APP_REALM}/protocol/openid-connect/certs
+          issuer-uri: https://localhost:${KC_HTTPS_PORT}/realms/${APP_REALM}
+          audience: ${APP_CLIENT_ID}
   grpc:
     client:
       channels:
@@ -27,7 +29,7 @@ spring:
           address: 'localhost:${AUTH_GRPC_SERVER_PORT}'
           negotiation-type: plaintext
     server:
-      port: ${USER_GRPC_SERVER_PORT:9091}
+      port: ${USER_GRPC_SERVER_PORT}
       reflection:
         enabled: true
 
@@ -47,14 +49,7 @@ decorator:
 
 logging:
   level:
+    root: INFO
     com.minispring.userservice: DEBUG
     org.hibernate.SQL: DEBUG
     org.zalando.logbook: TRACE
-
-app:
-  cache:
-    lifecycle:
-      default: ${CACHE_DEFAULT:1h}
-      user-info: ${CACHE_USER_INFO:24h}
-  audit:
-    enabled: ${APP_AUDIT_ENABLED:false}

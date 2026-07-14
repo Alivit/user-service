@@ -1,21 +1,19 @@
 spring:
-  profiles:
-    active: local
   application:
     name: user-service
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
   threads:
     virtual:
       enabled: true
   jpa:
     hibernate:
       ddl-auto: none
-    show-sql: true
+    open-in-view: false
     properties:
       hibernate:
-        format_sql: true
         default_schema: ${USER_DB_SCHEMA}
         default_batch_fetch_size: 50
-    open-in-view: false
   liquibase:
     enabled: true
     change-log: db/changelog/changelog.yml
@@ -25,21 +23,55 @@ spring:
       pageable:
         serialization-mode: via_dto
     redis:
-      timeout: ${REDIS_TIMEOUT:2000ms}
+      timeout: 2000ms
       lettuce:
         pool:
-          enabled: ${REDIS_POOL_ENABLED:true}
-          max-active: ${REDIS_POOL_MAX_ACTIVE:32}
-          max-idle: ${REDIS_POOL_MAX_IDLE:16}
-          min-idle: ${REDIS_POOL_MIN_IDLE:8}
-          max-wait: ${REDIS_POOL_MAX_WAIT:1000ms}
+          enabled: true
+          max-active: 32
+          max-idle: 16
+          min-idle: 8
+          max-wait: 1000ms
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: always
+  info:
+    env:
+      enabled: true
+
 logbook:
   format:
-    style: http
+    style: json
+  strategy: default
   obfuscate:
-    headers:
-      - Authorization
-      - X-Secret-Key
-    json-body-fields:
+    parameters:
       - password
+      - secret
+      - token
+      - cvv
+      - cardNumber
       - number
+  predicate:
+    exclude:
+      - path: /actuator/**
+      - path: /swagger-ui/**
+      - path: /v3/api-docs/**
+
+app:
+  security:
+    card-pepper: ${APP_SECURITY_CARD_SECRET}
+    jwt:
+      blacklist:
+        prefix: ${APP_SECURITY_BLACKLIST_PREFIX}
+        ttl: ${APP_SECURITY_TOKEN_LIFESPAN}s
+  cache:
+    lifecycle:
+      default: 1h
+      user-info: 24h

@@ -1,4 +1,4 @@
-name: Java CI Pipeline
+name: Payment Service CI Pipeline
 
 on:
   push:
@@ -13,12 +13,8 @@ on:
       - "feature/**"
 
 jobs:
-  build-test-analysis-package:
+  build-test-package:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-      packages: write
 
     steps:
       - name: Checkout repository
@@ -34,44 +30,34 @@ jobs:
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/develop' }}
 
-      - name: Build and Run Tests
-        run: ./gradlew clean build --no-daemon
+      - name: Check Code Formatting (Spotless)
+        run: |
+          chmod +x gradlew
+          ./gradlew spotlessCheck --no-daemon
 
-      - name: SonarQube Scan
+      - name: Build and Run All Tests (with Coverage)
+        run: ./gradlew build jacocoTestReport --no-daemon
+
+      - name: SonarQube Analysis
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        if: env.SONAR_TOKEN != null && env.SONAR_HOST_URL != null
+          SONAR_ORGANIZATION: ${{ secrets.SONAR_ORGANIZATION }}
+          SONAR_PROJECT_KEY: ${{secrets.SONAR_PROJECT_KEY}}
         run: ./gradlew sonar --no-daemon
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v6
+        uses: docker/setup-buildx-action@v4
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ghcr.io/${{ github.repository }}
-          tags: |
-            type=ref,event=branch
-            type=sha,format=short
-            latest
-
-      - name: Build and Push Docker Image
+      - name: Build Docker Image (Artifact Creation Check)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
-          push: true
-          tags: ${{ id.meta.outputs.tags }}
-          labels: ${{ id.meta.outputs.labels }}
+          push: false
+          tags: user-service:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max

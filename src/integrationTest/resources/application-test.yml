@@ -2,8 +2,6 @@ spring:
   application:
     name: user-service-test
 
-  datasource: {}
-
   jpa:
     hibernate:
       ddl-auto: validate
@@ -14,18 +12,27 @@ spring:
         default_schema: public
     open-in-view: false
 
+  security:
+    oauth2:
+      client:
+        registration:
+          user-service-internal:
+            provider: keycloak
+            client-id: "account"
+            authorization-grant-type: client_credentials
+        provider:
+          keycloak:
+            token-uri: "http://localhost:9999/dummy"
+      resourceserver:
+        jwt:
+          jwk-set-uri: "http://localhost:9999/dummy"
+          issuer-uri: "http://localhost:9999/dummy"
+          audience: "account"
+
   liquibase:
     enabled: true
     change-log: db/changelog/changelog.yml
     default-schema: public
-
-  task:
-    execution:
-      pool:
-        core-size: 0
-        max-size: 1
-        queue-capacity: 0
-      thread-name-prefix: test-sync-task-
 
   data:
     redis:
@@ -39,9 +46,13 @@ spring:
           max-wait: 500ms
 
 app:
+  security:
+    card-pepper: secret_test
+    jwt:
+      blacklist:
+        prefix: banned_users
+        ttl: 300s
   cache:
     lifecycle:
-      default: 1m
-      user-info: 5m
-  audit:
-    enabled: ${APP_AUDIT_ENABLED:true}
+      default: 1h
+      user-info: 24h

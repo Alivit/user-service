@@ -1,41 +1,48 @@
 package com.minispring.userservice;
 
-import com.minispring.userservice.security.SecurityConfig;
+import com.minispring.userservice.client.AuthGrpcClient;
+import org.junit.jupiter.api.AfterEach;
+import org.mockito.Mockito;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.security.oauth2.client.OAuth2AuthorizedClientManager;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 @Testcontainers
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @ActiveProfiles("test")
-public abstract class BaseIntegrationTest extends SecurityConfig {
+public abstract class BaseIntegrationTest {
 
-    @Container
-    protected static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>(
-            DockerImageName.parse("postgres:16-alpine"))
-            .withDatabaseName("user_service_test")
-            .withUsername("test")
-            .withPassword("test")
-            .withReuse(true);
+    @MockitoBean
+    protected JwtDecoder jwtDecoder;
 
-    @Container
-    protected static final GenericContainer<?> REDIS = new GenericContainer<>(
-            DockerImageName.parse("redis:7.4-alpine"))
-            .withExposedPorts(6379)
-            .withReuse(true);
+    @MockitoBean
+    protected AuthGrpcClient authGrpcClient;
 
-    @DynamicPropertySource
-    static void configure(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", POSTGRES::getJdbcUrl);
-        registry.add("spring.datasource.username", POSTGRES::getUsername);
-        registry.add("spring.datasource.password", POSTGRES::getPassword);
-        registry.add("spring.data.redis.host", REDIS::getHost);
-        registry.add("spring.data.redis.port", () -> REDIS.getMappedPort(6379));
+    @MockitoBean
+    protected OAuth2AuthorizedClientManager authorizedClientManager;
+
+    @ServiceConnection
+    static PostgreSQLContainer<?> postgreSQLContainer =
+            new PostgreSQLContainer<>(DockerImageName.parse("postgres:18-alpine"));
+
+    @ServiceConnection(name = "redis")
+    static GenericContainer<?> redisContainer =
+            new GenericContainer<>(DockerImageName.parse("redis:7.4-alpine")).withExposedPorts(6379);
+
+    static {
+        postgreSQLContainer.start();
+        redisContainer.start();
+    }
+
+    @AfterEach
+    void resetMocks() {
+        Mockito.reset(jwtDecoder, authGrpcClient);
     }
 }

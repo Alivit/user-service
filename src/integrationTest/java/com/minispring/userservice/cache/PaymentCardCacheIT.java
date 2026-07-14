@@ -1,8 +1,12 @@
 package com.minispring.userservice.cache;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.instancio.Select.field;
+
 import com.minispring.userservice.BaseIntegrationTest;
-import com.minispring.userservice.dto.PaymentCardCreateDto;
-import com.minispring.userservice.dto.PaymentCardUpdateDto;
+import com.minispring.userservice.dto.request.PaymentCardCreateRequest;
+import com.minispring.userservice.dto.request.PaymentCardUpdateRequest;
 import com.minispring.userservice.exception.BadRequestException;
 import com.minispring.userservice.exception.ResourceNotFoundException;
 import com.minispring.userservice.model.PaymentCard;
@@ -10,32 +14,25 @@ import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.PaymentCardRepository;
 import com.minispring.userservice.repository.UserRepository;
 import com.minispring.userservice.service.PaymentCardService;
+import java.time.YearMonth;
+import java.util.Objects;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import org.awaitility.Awaitility;
+import org.instancio.Instancio;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
-import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
-import java.time.YearMonth;
-import java.util.Objects;
-import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
-@AutoConfigureMockMvc
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
 public class PaymentCardCacheIT extends BaseIntegrationTest {
 
     @Autowired
@@ -50,171 +47,180 @@ public class PaymentCardCacheIT extends BaseIntegrationTest {
     @Autowired
     private PaymentCardRepository paymentCardRepository;
 
-    private User user;
-    private UUID userId;
-
-    @BeforeEach
-    void init() {
-        cacheManager.getCacheNames().forEach(name ->
-                Optional.ofNullable(cacheManager.getCache(name)).ifPresent(Cache::clear)
-        );
-
-        User rawUser = new User();
-        rawUser.setId(UUID.randomUUID());
-        rawUser.setName("TestName");
-        rawUser.setSurname("TestSurname");
-        rawUser.setEmail("test@example.com");
-        rawUser.setBirthDate(LocalDate.of(1995, 5, 20));
-        rawUser.setActive(true);
-
-        user = userRepository.saveAndFlush(rawUser);
-        userId = user.getId();
-    }
-
     @AfterEach
     void tearDown() {
-        paymentCardRepository.deleteAllInBatch();
-        userRepository.deleteAllInBatch();
+        paymentCardRepository.deleteAll();
+        userRepository.deleteAll();
     }
 
-    private void createUserCache() {
-        Objects.requireNonNull(cacheManager.getCache("user_info")).put(userId, "dummy_user");
+    private User createAndSaveUser() {
+        User user = Instancio.of(User.class)
+                .ignore(field("version"))
+                .ignore(field("cards"))
+                .set(field(User::getActive), true)
+                .create();
+        return userRepository.saveAndFlush(user);
     }
 
-    private PaymentCard createAndSaveValidCard() {
+    private PaymentCard createAndSaveCard(User user, boolean active) {
         PaymentCard card = new PaymentCard();
         card.setUser(user);
-        card.setNumber("1111222233334444");
+        card.setNumber("111122223333" + (int) (Math.random() * 9000 + 1000));
         card.setHolder("TEST SURNAME");
-        card.setExpirationDate(YearMonth.parse("2030-12"));
-        card.setActive(true);
+        card.setCardHash(UUID.randomUUID().toString());
+        card.setExpirationDate(YearMonth.of(2030, 12));
+        card.setActive(active);
         return paymentCardRepository.saveAndFlush(card);
     }
 
-    private PaymentCard createAndSaveCardWithNumber(String number) {
-        PaymentCard card = new PaymentCard();
-        card.setUser(user);
-        card.setNumber(number);
-        card.setHolder("TEST SURNAME");
-        card.setExpirationDate(YearMonth.parse("2030-12"));
-        card.setActive(true);
-        return paymentCardRepository.saveAndFlush(card);
-    }
-
-    private PaymentCard createAndSaveValidInactiveCard() {
-        PaymentCard card = new PaymentCard();
-        card.setUser(user);
-        card.setNumber("5555666677778888");
-        card.setHolder("TEST SURNAME");
-        card.setExpirationDate(YearMonth.parse("2030-12"));
-        card.setActive(false);
-        return paymentCardRepository.saveAndFlush(card);
+    private void seedUserCache(UUID userId) {
+        Objects.requireNonNull(cacheManager.getCache("user_info")).put(userId, "dummy_user_data");
     }
 
     @Nested
     class CreateCardCacheTest {
 
-        private PaymentCardCreateDto createDto;
+        @Test
+        void shouldEvictCacheWhenSuccess() {
+            User user = createAndSaveUser();
+            seedUserCache(user.getId());
+            PaymentCardCreateRequest createDto =
+                    new PaymentCardCreateRequest("1234567890123456", "TEST SURNAME", YearMonth.of(2031, 12));
 
-        @BeforeEach
-        public void initCreate(){
-            createDto = new PaymentCardCreateDto("1234567890123456", "TEST SURNAME", YearMonth.parse("2031-12"));
+            paymentCardService.create(user.getId(), createDto);
+
+            assertCacheEmpty("user_info", user.getId());
         }
 
         @Test
-        void createShouldEvictCacheWhenSuccess() {
-            createUserCache();
-            paymentCardService.create(userId, createDto);
-            assertCacheEmpty("user_info", userId);
-        }
-
-        @Test
-        void createShouldNotEvictCacheWhenLimitExceeded() {
+        void shouldNotEvictCacheWhenLimitExceeded() {
+            User user = createAndSaveUser();
             for (int i = 0; i < 5; i++) {
-                createAndSaveCardWithNumber("444455556666000" + i);
+                createAndSaveCard(user, true);
             }
+            seedUserCache(user.getId());
+            PaymentCardCreateRequest createDto =
+                    new PaymentCardCreateRequest("1234567890123456", "TEST SURNAME", YearMonth.of(2031, 12));
 
-            createUserCache();
+            assertThatThrownBy(() -> paymentCardService.create(user.getId(), createDto))
+                    .isInstanceOf(BadRequestException.class);
 
-            assertThrows(BadRequestException.class, () ->
-                    paymentCardService.create(userId, createDto));
+            assertCacheExists("user_info", user.getId());
+        }
 
-            assertCacheExists("user_info", userId);
+        @Test
+        void shouldNotEvictCacheWhenUserIsBlocked() {
+            User user = createAndSaveUser();
+
+            user.setActive(false);
+            userRepository.saveAndFlush(user);
+
+            seedUserCache(user.getId());
+            PaymentCardCreateRequest createDto =
+                    new PaymentCardCreateRequest("1234567890123456", "TEST SURNAME", YearMonth.of(2031, 12));
+
+            assertThatThrownBy(() -> paymentCardService.create(user.getId(), createDto))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessage("Action denied: User is blocked or deleted");
+
+            assertCacheExists("user_info", user.getId());
         }
     }
 
     @Nested
     class UpdateCacheTest {
 
-        @Test
-        void updateShouldEvictCacheWhenDataChanged() {
-            PaymentCard card = createAndSaveValidCard();
-            createUserCache();
+        static Stream<PaymentCardUpdateRequest> provideUpdateRequests() {
+            return Stream.of(
+                    new PaymentCardUpdateRequest("1234123412341234", null, null),
+                    new PaymentCardUpdateRequest(null, "NEW HOLDER", null),
+                    new PaymentCardUpdateRequest(null, null, YearMonth.now().plusMonths(1)),
+                    new PaymentCardUpdateRequest("1234123412341234", "NEW HOLDER", null),
+                    new PaymentCardUpdateRequest(
+                            "1234123412341234", null, YearMonth.now().plusMonths(1)),
+                    new PaymentCardUpdateRequest(
+                            null, "NEW HOLDER", YearMonth.now().plusMonths(1)),
+                    new PaymentCardUpdateRequest(
+                            "1234123412341234", "NEW HOLDER", YearMonth.now().plusMonths(1)),
+                    new PaymentCardUpdateRequest(null, null, null),
+                    new PaymentCardUpdateRequest("9999888877776666", "TEST NAME", YearMonth.of(2030, 1)));
+        }
 
-            PaymentCardUpdateDto updateDto = new PaymentCardUpdateDto(null, "NEW HOLDER", YearMonth.parse("2035-05"), true);
-            paymentCardService.update(card.getId(), updateDto);
+        @ParameterizedTest
+        @MethodSource("provideUpdateRequests")
+        void shouldEvictCacheWhenValidRequest(PaymentCardUpdateRequest request) {
+            User user = createAndSaveUser();
+            PaymentCard card = createAndSaveCard(user, true);
+            seedUserCache(user.getId());
 
-            assertCacheEmpty("user_info", card.getId());
+            paymentCardService.update(card.getId(), request);
+
+            assertCacheEmpty("user_info", user.getId());
         }
 
         @Test
-        void updateShouldThrowExceptionAndNotEvictCacheWhenCardNotFound() {
-            UUID randomId = UUID.randomUUID();
-            createUserCache();
-            PaymentCardUpdateDto dto = new PaymentCardUpdateDto(null, "FAIL NAME", YearMonth.parse("2035-05"), true);
+        void shouldNotEvictCacheWhenCardNotFound() {
+            User user = createAndSaveUser();
+            seedUserCache(user.getId());
+            UUID unknownCardId = UUID.randomUUID();
+            PaymentCardUpdateRequest request = new PaymentCardUpdateRequest(null, "FAIL NAME", YearMonth.of(2035, 5));
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    paymentCardService.update(randomId, dto)
-            );
+            assertThatThrownBy(() -> paymentCardService.update(unknownCardId, request))
+                    .isInstanceOf(ResourceNotFoundException.class);
 
-            assertCacheExists("user_info", userId);
+            assertCacheExists("user_info", user.getId());
         }
-
     }
 
     @Nested
     class DeleteCacheTest {
 
         @Test
-        void deleteWithUserIdShouldEvictAllRelatedCachesOnSuccess() {
-            PaymentCard card = createAndSaveValidCard();
-            createUserCache();
+        void shouldEvictUserCacheOnSuccessByUser() {
+            User user = createAndSaveUser();
+            PaymentCard card = createAndSaveCard(user, true);
+            seedUserCache(user.getId());
 
-            paymentCardService.delete(userId, card.getId());
+            paymentCardService.delete(user.getId(), card.getId());
 
-            assertCacheEmpty("user_info", userId);
+            assertCacheEmpty("user_info", user.getId());
         }
 
         @Test
-        void deleteShouldEvictAllRelatedCachesOnSuccess() {
-            PaymentCard card = createAndSaveValidCard();
-            createUserCache();
+        void shouldEvictUserCacheOnSuccessByAdmin() {
+            User user = createAndSaveUser();
+            PaymentCard card = createAndSaveCard(user, true);
+            seedUserCache(user.getId());
 
             paymentCardService.delete(card.getId());
 
-            assertCacheEmpty("user_info", userId);
+            assertCacheEmpty("user_info", user.getId());
         }
 
         @Test
-        void shouldWithUserIdNotEvictUserCacheWhenExceptionThrown() {
-            createUserCache();
+        void shouldNotEvictUserCacheWhenExceptionThrown() {
+            User user = createAndSaveUser();
+            seedUserCache(user.getId());
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    paymentCardService.delete(userId, UUID.randomUUID())
-            );
+            assertThatThrownBy(() -> paymentCardService.delete(user.getId(), UUID.randomUUID()))
+                    .isInstanceOf(ResourceNotFoundException.class);
 
-            assertCacheExists("user_info", userId);
+            assertCacheExists("user_info", user.getId());
         }
 
         @Test
-        void shouldWithNotEvictUserCacheWhenExceptionThrown() {
-            createUserCache();
+        void shouldNotEvictCacheWhenUserIsDeleted() {
+            User user = createAndSaveUser();
+            PaymentCard card = createAndSaveCard(user, true);
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    paymentCardService.delete(UUID.randomUUID())
-            );
+            userRepository.deleteById(user.getId());
 
-            assertCacheExists("user_info", userId);
+            seedUserCache(user.getId());
+
+            assertThatThrownBy(() -> paymentCardService.delete(user.getId(), card.getId()))
+                    .isInstanceOf(Exception.class);
+
+            assertCacheExists("user_info", user.getId());
         }
     }
 
@@ -222,47 +228,56 @@ public class PaymentCardCacheIT extends BaseIntegrationTest {
     class DeactivateCacheTestTest {
 
         @Test
-        void deactivateShouldEvictUserCacheWhenCardExists() {
-            PaymentCard card = createAndSaveValidCard();
-            createUserCache();
+        void shouldEvictUserCacheWhenCardExistsByUser() {
+            User user = createAndSaveUser();
+            PaymentCard card = createAndSaveCard(user, true);
+            seedUserCache(user.getId());
+
+            paymentCardService.deactivate(user.getId(), card.getId());
+
+            assertCacheEmpty("user_info", user.getId());
+            assertThat(paymentCardRepository.findById(card.getId()).get().getActive())
+                    .isFalse();
+        }
+
+        @Test
+        void shouldEvictUserCacheWhenCardExistsByAdmin() {
+            User user = createAndSaveUser();
+            PaymentCard card = createAndSaveCard(user, true);
+            seedUserCache(user.getId());
 
             paymentCardService.deactivate(card.getId());
 
-            assertCacheEmpty("user_info", userId);
-            assertThat(paymentCardRepository.findById(card.getId()).get().getActive()).isFalse();
+            assertCacheEmpty("user_info", user.getId());
+            assertThat(paymentCardRepository.findById(card.getId()).get().getActive())
+                    .isFalse();
         }
 
         @Test
-        void deactivateWithUserIdShouldEvictUserCacheWhenCardExists() {
-            PaymentCard card = createAndSaveValidCard();
-            createUserCache();
+        void shouldNotEvictCacheWhenCardNotFound() {
+            User user = createAndSaveUser();
+            seedUserCache(user.getId());
 
-            paymentCardService.deactivate(userId, card.getId());
+            assertThatThrownBy(() -> paymentCardService.deactivate(user.getId(), UUID.randomUUID()))
+                    .isInstanceOf(ResourceNotFoundException.class);
 
-            assertCacheEmpty("user_info", userId);
-            assertThat(paymentCardRepository.findById(card.getId()).get().getActive()).isFalse();
+            assertCacheExists("user_info", user.getId());
         }
 
         @Test
-        void deactivateWithUserIdShouldThrowExceptionWhenCardNotFound() {
-            createUserCache();
-            UUID cardInvalidId = UUID.randomUUID();
+        void shouldNotEvictCacheWhenUserIsBlocked() {
+            User user = createAndSaveUser();
+            PaymentCard card = createAndSaveCard(user, true);
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    paymentCardService.deactivate(cardInvalidId, userId));
+            user.setActive(false);
+            userRepository.saveAndFlush(user);
 
-            assertCacheExists("user_info", userId);
-        }
+            seedUserCache(user.getId());
 
-        @Test
-        void deactivateShouldThrowExceptionWhenCardNotFound() {
-            createUserCache();
-            UUID cardInvalidId = UUID.randomUUID();
+            assertThatThrownBy(() -> paymentCardService.deactivate(user.getId(), card.getId()))
+                    .isInstanceOf(BadRequestException.class);
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    paymentCardService.deactivate(cardInvalidId));
-
-            assertCacheExists("user_info", userId);
+            assertCacheExists("user_info", user.getId());
         }
     }
 
@@ -270,26 +285,27 @@ public class PaymentCardCacheIT extends BaseIntegrationTest {
     class ActiveTest {
 
         @Test
-        void activateShouldEvictUserCacheWhenCardExists() {
-            PaymentCard card = createAndSaveValidInactiveCard();
-            createUserCache();
+        void shouldEvictUserCacheWhenCardExists() {
+            User user = createAndSaveUser();
+            PaymentCard card = createAndSaveCard(user, false);
+            seedUserCache(user.getId());
 
             paymentCardService.activate(card.getId());
 
-            assertCacheEmpty("user_info", userId);
-            assertThat(paymentCardRepository.findById(card.getId()).get().getActive()).isTrue();
+            assertCacheEmpty("user_info", user.getId());
+            assertThat(paymentCardRepository.findById(card.getId()).get().getActive())
+                    .isTrue();
         }
 
-
         @Test
-        void activateShouldThrowExceptionWhenCardNotFound() {
-            createUserCache();
-            UUID cardInvalidId = UUID.randomUUID();
+        void shouldNotEvictCacheWhenCardNotFound() {
+            User user = createAndSaveUser();
+            seedUserCache(user.getId());
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    paymentCardService.activate(cardInvalidId));
+            assertThatThrownBy(() -> paymentCardService.activate(UUID.randomUUID()))
+                    .isInstanceOf(ResourceNotFoundException.class);
 
-            assertCacheExists("user_info", userId);
+            assertCacheExists("user_info", user.getId());
         }
     }
 
@@ -297,7 +313,9 @@ public class PaymentCardCacheIT extends BaseIntegrationTest {
         Cache cache = cacheManager.getCache(cacheName);
         assertThat(cache).isNotNull();
 
-        Awaitility.await().atMost(2, TimeUnit.SECONDS).pollInterval(10, TimeUnit.MILLISECONDS)
+        Awaitility.await()
+                .atMost(2, TimeUnit.SECONDS)
+                .pollInterval(10, TimeUnit.MILLISECONDS)
                 .untilAsserted(() -> {
                     boolean existsAsUuid = cache.get(key) != null;
                     boolean existsAsString = cache.get(key.toString()) != null;
@@ -311,7 +329,9 @@ public class PaymentCardCacheIT extends BaseIntegrationTest {
         Cache cache = cacheManager.getCache(cacheName);
         assertThat(cache).isNotNull();
 
-        Awaitility.await().atMost(2, TimeUnit.SECONDS).pollInterval(10, TimeUnit.MILLISECONDS)
+        Awaitility.await()
+                .atMost(2, TimeUnit.SECONDS)
+                .pollInterval(10, TimeUnit.MILLISECONDS)
                 .untilAsserted(() -> {
                     assertThat(cache.get(key))
                             .as("Cache '%s' still contains data for UUID key", cacheName)

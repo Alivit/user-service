@@ -1,19 +1,14 @@
-package com.minispring.userservice.dto;
-
-import com.fasterxml.jackson.annotation.JsonTypeInfo;
+package com.minispring.userservice.dto.response;
 
 import java.time.Instant;
 import java.time.YearMonth;
 import java.util.UUID;
 
-public record PaymentCardProfileDto(
+public record PaymentCardSummary(
         UUID id,
-        UserShortDto user,
         String number,
         String holder,
         YearMonth expirationDate,
         Boolean active,
         Instant createdAt,
-        Instant updatedAt
-) {
-}
+        Instant updatedAt) {}

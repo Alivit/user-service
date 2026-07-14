@@ -1,34 +1,33 @@
 package com.minispring.userservice.service;
 
-import com.minispring.userservice.dto.PaymentCardCreateDto;
-import com.minispring.userservice.dto.PaymentCardProfileDto;
-import com.minispring.userservice.dto.PaymentCardUpdateDto;
+import com.minispring.userservice.dto.request.PaymentCardCreateRequest;
+import com.minispring.userservice.dto.request.PaymentCardUpdateRequest;
+import com.minispring.userservice.dto.response.PaymentCardView;
+import java.util.List;
+import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
-import java.util.List;
-import java.util.UUID;
-
 public interface PaymentCardService {
-    PaymentCardProfileDto create(UUID userId, PaymentCardCreateDto paymentCardCreateDto);
+    PaymentCardView create(UUID userId, PaymentCardCreateRequest request);
 
-    PaymentCardProfileDto getById(UUID userId, UUID cardId);
+    PaymentCardView getById(UUID userId, UUID cardId);
 
-    PaymentCardProfileDto getById(UUID cardId);
+    PaymentCardView getById(UUID cardId);
 
-    Page<PaymentCardProfileDto> getAllBy(Pageable pageable);
+    Page<PaymentCardView> getAllBy(Pageable pageable);
 
-    List<PaymentCardProfileDto> getAll(UUID userId);
+    List<PaymentCardView> getAll(UUID userId);
 
-    PaymentCardProfileDto update(UUID cardId, PaymentCardUpdateDto paymentCardUpdateDto);
+    PaymentCardView update(UUID cardId, PaymentCardUpdateRequest request);
 
     void delete(UUID userId, UUID cardId);
 
     void delete(UUID cardId);
 
-    PaymentCardProfileDto deactivate(UUID userId, UUID cardId);
+    PaymentCardView deactivate(UUID userId, UUID cardId);
 
-    PaymentCardProfileDto deactivate(UUID cardId);
+    PaymentCardView deactivate(UUID cardId);
 
-    PaymentCardProfileDto activate(UUID cardId);
+    PaymentCardView activate(UUID cardId);
 }

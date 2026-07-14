@@ -13,8 +13,7 @@ public class GrpcClientConfig {
 
     @Bean
     public AuthGrpcServiceGrpc.AuthGrpcServiceBlockingStub userStatusGrpcStub(
-            GrpcChannelFactory channelFactory,
-            BearerTokenInterceptor bearerTokenInterceptor) {
+            GrpcChannelFactory channelFactory, BearerTokenInterceptor bearerTokenInterceptor) {
         Channel channel = channelFactory.createChannel("auth-service-grpc");
         Channel interceptedChannel = ClientInterceptors.intercept(channel, bearerTokenInterceptor);
         return AuthGrpcServiceGrpc.newBlockingStub(interceptedChannel);

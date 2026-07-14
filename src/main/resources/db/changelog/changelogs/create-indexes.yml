@@ -1,4 +1,5 @@
 databaseChangeLog:
+  - logicalFilePath: db/changelog/changes/create-indexes.yml
   - changeSet:
       id: 3
       author: Chuiko Vitali
@@ -50,31 +51,26 @@ databaseChangeLog:
               tableName: users
       changes:
         - sql:
-            sql: "CREATE UNIQUE INDEX uk_users_email ON users (email) WHERE deleted = false;"
+            sql: "CREATE UNIQUE INDEX uk_users_email_lower ON users (LOWER(email)) WHERE deleted = false;"
       rollback:
         - sql:
-            sql: "DROP INDEX IF EXISTS uk_users_email;"
+            sql: "DROP INDEX IF EXISTS uk_users_email_lower;"
   - changeSet:
       id: 7
       author: Chuiko Vitali
       dbms: postgresql
       preConditions:
         - onFail: MARK_RAN
-          not:
-            - indexExists:
-                tableName: users
-                indexName: idx_users_email
+        - not:
+            indexExists:
+              indexName: idx_users_email_lower_history
+              tableName: users
       changes:
-        - createIndex:
-            tableName: users
-            indexName: idx_users_email
-            columns:
-              - column:
-                  name: email
+        - sql:
+            sql: "CREATE INDEX idx_users_email_lower_history ON users (LOWER(email));"
       rollback:
-        - dropIndex:
-            tableName: users
-            indexName: idx_users_email
+        - sql:
+            sql: "DROP INDEX IF EXISTS idx_users_email_lower_history;"
 
 
 

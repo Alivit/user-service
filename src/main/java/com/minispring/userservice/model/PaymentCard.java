@@ -7,17 +7,15 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
+import java.time.YearMonth;
+import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.SoftDelete;
 import org.hibernate.annotations.UuidGenerator;
 import org.hibernate.type.SqlTypes;
-
-import java.time.YearMonth;
-import java.util.UUID;
 
 @Entity
 @Table(name = "payment_cards")
@@ -41,6 +39,9 @@ public class PaymentCard extends AuditableEntity {
 
     @Column(nullable = false)
     private String number;
+
+    @Column(name = "card_hash", nullable = false, unique = true, length = 64)
+    private String cardHash;
 
     @Column(nullable = false)
     private String holder;

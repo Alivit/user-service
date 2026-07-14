@@ -8,89 +8,65 @@ import com.minispring.grpc.service.GetUsersByIdsRequest;
 import com.minispring.grpc.service.GetUsersByIdsResponse;
 import com.minispring.grpc.service.UserDto;
 import com.minispring.grpc.service.UserGrpcServiceGrpc;
-import com.minispring.userservice.exception.ResourceNotFoundException;
+import com.minispring.userservice.dto.response.UserView;
+import com.minispring.userservice.mapper.GrpcUserMapper;
 import com.minispring.userservice.service.UserService;
-import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import java.util.List;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.grpc.server.service.GrpcService;
 import org.springframework.security.access.prepost.PreAuthorize;
 
-import java.util.List;
-import java.util.UUID;
-
-import static com.minispring.userservice.exception.ExceptionAnswer.EMAIL_NOT_FOUND;
-
 @Slf4j
 @GrpcService
 @RequiredArgsConstructor
-@PreAuthorize("hasAnyRole('USER', 'ADMIN')")
+@PreAuthorize("hasAnyRole('USER', 'ADMIN', 'INTERNAL_SERVICE')")
 public class UserGrpc extends UserGrpcServiceGrpc.UserGrpcServiceImplBase {
 
     private final UserService userService;
+    private final GrpcUserMapper grpcUserMapper;
 
     @Override
     public void getUserByEmail(GetUserByEmailRequest request, StreamObserver<GetUserByEmailResponse> responseObserver) {
-        try {
-            UserDto userDto = userService.getByEmailForGrpc(request.getEmail());
+        UserView profile = userService.getHistoricalUserByEmail(request.getEmail());
+        UserDto userDto = grpcUserMapper.toGrpcUserDto(profile);
 
-            GetUserByEmailResponse response = GetUserByEmailResponse.newBuilder()
-                    .setUser(userDto)
-                    .build();
+        GetUserByEmailResponse response =
+                GetUserByEmailResponse.newBuilder().setUser(userDto).build();
 
-            responseObserver.onNext(response);
-            responseObserver.onCompleted();
-
-        } catch (ResourceNotFoundException ex) {
-            log.warn(String.format(EMAIL_NOT_FOUND, request.getEmail()));
-            responseObserver.onError(Status.NOT_FOUND.withDescription(ex.getMessage()).asRuntimeException());
-        } catch (Exception ex) {
-            log.error("Unexpected error in getUserByEmail for email={}", request.getEmail(), ex);
-            responseObserver.onError(Status.INTERNAL.withDescription("Internal server error").withCause(ex).asRuntimeException());
-        }
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
     }
 
     @Override
     public void getUserById(GetUserByIdRequest request, StreamObserver<GetUserByIdResponse> responseObserver) {
-        try {
-            UserDto userDto = userService.getByIdForGrpc(UUID.fromString(request.getUserId()));
+        UserView profile = userService.getHistoricalUserById(UUID.fromString(request.getUserId()));
+        UserDto userDto = grpcUserMapper.toGrpcUserDto(profile);
 
-            GetUserByIdResponse response = GetUserByIdResponse.newBuilder()
-                    .setUser(userDto)
-                    .build();
+        GetUserByIdResponse response =
+                GetUserByIdResponse.newBuilder().setUser(userDto).build();
 
-            responseObserver.onNext(response);
-            responseObserver.onCompleted();
-
-        } catch (ResourceNotFoundException ex) {
-            responseObserver.onError(Status.NOT_FOUND.withDescription(ex.getMessage()).withCause(ex).asRuntimeException());
-        } catch (Exception ex) {
-            log.error("Unexpected error in getUserById for id={}", request.getUserId(), ex);
-            responseObserver.onError(Status.INTERNAL.withDescription("Internal server error").withCause(ex).asRuntimeException());
-        }
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
     }
 
     @Override
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'INTERNAL_SERVICE')")
     public void getUsersByIds(GetUsersByIdsRequest request, StreamObserver<GetUsersByIdsResponse> responseObserver) {
-        try {
-            List<UUID> uuids = request.getUserIdsList().stream()
-                    .map(UUID::fromString)
-                    .toList();
+        List<UUID> uuids =
+                request.getUserIdsList().stream().map(UUID::fromString).toList();
 
-            List<UserDto> usersDto = userService.getUsersByIdsForGrpc(uuids);
+        List<UserView> profiles = userService.getHistoricalUsersByIds(uuids);
 
-            GetUsersByIdsResponse response = GetUsersByIdsResponse.newBuilder()
-                    .addAllUsers(usersDto)
-                    .build();
+        List<UserDto> usersDto =
+                profiles.stream().map(grpcUserMapper::toGrpcUserDto).toList();
 
-            responseObserver.onNext(response);
-            responseObserver.onCompleted();
+        GetUsersByIdsResponse response =
+                GetUsersByIdsResponse.newBuilder().addAllUsers(usersDto).build();
 
-        } catch (Exception ex) {
-            log.error("Unexpected error in getUsersByIds gRPC method", ex);
-            responseObserver.onError(Status.INTERNAL.withDescription("Internal server error").withCause(ex).asRuntimeException());
-        }
+        responseObserver.onNext(response);
+        responseObserver.onCompleted();
     }
 }

@@ -1,6 +1,9 @@
 spring:
+  config:
+    activate:
+      on-profile: docker
   datasource:
-    url: ${USER_DB_URL}
+    url: jdbc:postgresql://user-postgres:${USER_POSTGRES_PORT}/${USER_DB_NAME}?currentSchema=${USER_DB_SCHEMA}
     username: ${USER_DB_USERNAME}
     password: ${USER_DB_PASSWORD}
     hikari:
@@ -12,16 +15,37 @@ spring:
     properties:
       hibernate:
         format_sql: false
-        generate_statistics: ${HIBERNATE_STATISTICS_ENABLED:false}
+        generate_statistics: false
   data:
     redis:
-      host: ${REDIS_HOST_DOCKER:redis}
-      port: ${REDIS_PORT:6379}
+      host: redis
+      port: ${REDIS_PORT}
   security:
     oauth2:
+      client:
+        registration:
+          user-service-internal:
+            provider: keycloak
+            client-id: ${APP_CLIENT_ID}
+            client-authentication-method: none
+            authorization-grant-type: client_credentials
+        provider:
+          keycloak:
+            token-uri: https://keycloak:${KC_HTTPS_PORT}/realms/${APP_REALM}/protocol/openid-connect/token
       resourceserver:
         jwt:
-          jwk-set-uri: ${APP_JWK_SET_URI_DOCKER}
+          jwk-set-uri: https://keycloak:${KC_HTTPS_PORT}/realms/${APP_REALM}/protocol/openid-connect/certs
+          issuer-uri: https://keycloak:${KC_HTTPS_PORT}/realms/${APP_REALM}
+          audience: ${APP_CLIENT_ID}
+  ssl:
+    bundle:
+      pem:
+        keycloak-mtls:
+          keystore:
+            certificate: "file:/app/certs/auth-client.crt"
+            private-key: "file:/app/certs/auth-client.key"
+          truststore:
+            certificate: "file:/app/certs/root-ca.crt"
   grpc:
     client:
       channels:
@@ -29,7 +53,7 @@ spring:
           address: 'auth-service:${AUTH_GRPC_SERVER_PORT}'
           negotiation-type: plaintext
     server:
-      port: ${USER_GRPC_SERVER_PORT:9091}
+      port: ${USER_GRPC_SERVER_PORT}
       reflection:
         enabled: true
 
@@ -37,28 +61,14 @@ decorator:
   datasource:
     datasource-proxy:
       query:
-        enable-logging: ${DB_QUERY_LOGGING_ENABLED:false}
+        enable-logging: false
       slow-query:
-        enable-logging: ${DB_SLOW_QUERY_LOGGING_ENABLED:false}
+        enable-logging: true
         log-level: warn
 
 logging:
   level:
-    com.minispring.userservice: ${LOG_LEVEL_APP:INFO}
-    org.hibernate.SQL: ${LOG_LEVEL_HIBERNATE:OFF}
-    org.zalando.logbook: ${LOG_LEVEL_LOGBOOK:OFF}
     root: INFO
-    com.minispring: TRACE
-    org.springframework.security: DEBUG
-    org.springframework.security.oauth2: DEBUG
-    org.springframework.grpc: DEBUG
-    io.grpc: DEBUG
-    liquibase: INFO
-
-app:
-  cache:
-    lifecycle:
-      default: ${CACHE_DEFAULT:1h}
-      user-info: ${CACHE_USER_INFO:24h}
-  audit:
-    enabled: ${APP_AUDIT_ENABLED:false}
+    com.minispring.userservice: INFO
+    org.hibernate.SQL: OFF
+    org.zalando.logbook: OFF

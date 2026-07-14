@@ -1,37 +1,45 @@
 package com.minispring.userservice.service;
 
-import com.minispring.grpc.service.UserDto;
-import com.minispring.userservice.dto.AdminUserUpdateDto;
-import com.minispring.userservice.dto.UserCreateDto;
-import com.minispring.userservice.dto.UserParamsDto;
-import com.minispring.userservice.dto.UserProfileDto;
-import com.minispring.userservice.dto.UserUpdateDto;
+import com.minispring.userservice.dto.request.AdminUserUpdateRequest;
+import com.minispring.userservice.dto.request.UserCreateRequest;
+import com.minispring.userservice.dto.request.UserSearchCriteria;
+import com.minispring.userservice.dto.request.UserUpdateRequest;
+import com.minispring.userservice.dto.response.UserView;
+import com.minispring.userservice.model.User;
+import java.util.List;
+import java.util.UUID;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
-import java.util.List;
-import java.util.UUID;
-
 public interface UserService {
-    UserProfileDto create(UserCreateDto userCreateDto);
 
-    UserProfileDto getById(UUID userId);
+    UserView create(UserCreateRequest request);
 
-    UserDto getByIdForGrpc(UUID userId);
+    UserView getById(UUID userId);
 
-    UserDto getByEmailForGrpc(String email);
+    UserView getHistoricalUserById(UUID userId);
 
-    List<UserDto> getUsersByIdsForGrpc(List<UUID> userIds);
+    UserView getHistoricalUserByEmail(String email);
 
-    Page<UserProfileDto> getAllBy(UserParamsDto userParamsDto, Pageable pageable);
+    List<UserView> getHistoricalUsersByIds(List<UUID> userIds);
 
-    UserProfileDto update(UUID userId, AdminUserUpdateDto adminUpdateDto);
+    Page<UserView> getAllBy(UserSearchCriteria userSearchCriteria, Pageable pageable);
 
-    UserProfileDto update(UUID userId, UserUpdateDto userUpdateDto);
+    User getValidUserEntity(UUID userId);
+
+    User getValidUserEntityForUpdate(UUID userId);
+
+    User getUserReference(UUID userId);
+
+    void validateUserAllowed(User user);
+
+    UserView update(UUID userId, AdminUserUpdateRequest request);
+
+    UserView update(UUID userId, UserUpdateRequest request);
 
     void delete(UUID userId);
 
-    UserProfileDto deactivate(UUID userId);
+    UserView deactivate(UUID userId);
 
-    UserProfileDto activate(UUID userId);
+    UserView activate(UUID userId);
 }

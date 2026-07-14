@@ -1,16 +1,15 @@
-package com.minispring.userservice.dto;
+package com.minispring.userservice.dto.response;
 
 import java.time.Instant;
 import java.time.YearMonth;
 import java.util.UUID;
 
-public record PaymentCardShortDto(
+public record PaymentCardView(
         UUID id,
+        UserSummary user,
         String number,
         String holder,
         YearMonth expirationDate,
         Boolean active,
         Instant createdAt,
-        Instant updatedAt
-) {
-}
+        Instant updatedAt) {}

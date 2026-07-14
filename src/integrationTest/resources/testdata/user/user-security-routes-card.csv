@@ -1,0 +1,6 @@
+method,route
+GET,/api/v1/cards
+POST,/api/v1/cards
+GET,/api/v1/cards/123e4567-e89b-12d3-a456-426614174000
+DELETE,/api/v1/cards/123e4567-e89b-12d3-a456-426614174000
+POST,/api/v1/cards/123e4567-e89b-12d3-a456-426614174000/deactivate

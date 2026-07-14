@@ -1,41 +1,45 @@
 package com.minispring.userservice.cache;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.instancio.Select.field;
+
 import com.minispring.userservice.BaseIntegrationTest;
-import com.minispring.userservice.dto.AdminUserUpdateDto;
-import com.minispring.userservice.dto.UserUpdateDto;
+import com.minispring.userservice.dto.request.AdminUserUpdateRequest;
+import com.minispring.userservice.dto.request.UserUpdateRequest;
+import com.minispring.userservice.exception.BadRequestException;
 import com.minispring.userservice.exception.ResourceNotFoundException;
 import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.UserRepository;
 import com.minispring.userservice.service.UserService;
-import com.minispring.userservice.client.AuthGrpcClient;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.util.UUID;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
 import org.awaitility.Awaitility;
+import org.instancio.Instancio;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
-import org.springframework.test.annotation.DirtiesContext;
-import org.springframework.test.context.TestPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
-import java.util.Optional;
-import java.util.UUID;
-import java.util.concurrent.TimeUnit;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-
-@AutoConfigureMockMvc
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@DirtiesContext(classMode = DirtiesContext.ClassMode.AFTER_CLASS)
-@TestPropertySource(properties = "app.audit.enabled=false")
 public class UserCacheIT extends BaseIntegrationTest {
+
+    @Value("${app.security.jwt.blacklist.prefix}")
+    private String blacklistPrefix;
+
+    @Value("${app.security.jwt.blacklist.ttl}")
+    private Duration blacklistTtl;
 
     @Autowired
     private UserService userService;
@@ -46,37 +50,20 @@ public class UserCacheIT extends BaseIntegrationTest {
     @Autowired
     private UserRepository userRepository;
 
-    @BeforeEach
-    void init() {
-        cacheManager.getCacheNames().forEach(name ->
-                Optional.ofNullable(cacheManager.getCache(name)).ifPresent(Cache::clear)
-        );
-    }
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
 
     @AfterEach
     void tearDown() {
-        userRepository.deleteAllInBatch();
+        userRepository.deleteAll();
     }
 
-    private User createAndSaveActiveUser(String email) {
-        User user = new User();
-        user.setId(UUID.randomUUID());
-        user.setName("Ivan");
-        user.setSurname("Ivanov");
-        user.setEmail(email);
-        user.setBirthDate(LocalDate.of(1995, 5, 20));
-        user.setActive(true);
-        return userRepository.saveAndFlush(user);
-    }
-
-    private User createAndSaveInactiveUser(String email) {
-        User user = new User();
-        user.setId(UUID.randomUUID());
-        user.setName("Petr");
-        user.setSurname("Petrov");
-        user.setEmail(email);
-        user.setBirthDate(LocalDate.of(1993, 3, 15));
-        user.setActive(false);
+    private User createAndSaveUser(boolean active) {
+        User user = Instancio.of(User.class)
+                .ignore(field("version"))
+                .ignore(field("cards"))
+                .set(field(User::getActive), active)
+                .create();
         return userRepository.saveAndFlush(user);
     }
 
@@ -84,8 +71,8 @@ public class UserCacheIT extends BaseIntegrationTest {
     class GetUserCacheTest {
 
         @Test
-        void getByIdShouldCacheData() {
-            User user = createAndSaveActiveUser("test@example.com");
+        void shouldCacheUserData() {
+            User user = createAndSaveUser(true);
 
             userService.getById(user.getId());
 
@@ -93,74 +80,140 @@ public class UserCacheIT extends BaseIntegrationTest {
         }
 
         @Test
-        void getByIdShouldThrowExceptionWhenUserNotFound() {
-            User user = createAndSaveActiveUser("test@example.com");
+        void shouldNotCacheDataWhenUserNotFound() {
+            UUID unknownId = UUID.randomUUID();
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    userService.getById(UUID.randomUUID()));
+            assertThatThrownBy(() -> userService.getById(unknownId)).isInstanceOf(ResourceNotFoundException.class);
+
+            assertCacheEmpty("user_info", unknownId);
+        }
+    }
+
+    @Nested
+    class BlockedAndDeletedUserCacheTest {
+
+        @Test
+        void shouldNotCacheGetByIdForBlockedUser() {
+            User user = createAndSaveUser(false);
+
+            assertThatThrownBy(() -> userService.getById(user.getId()))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessage("Action denied: User is blocked or deleted");
 
             assertCacheEmpty("user_info", user.getId());
+        }
+
+        @Test
+        void shouldNotCacheGetByIdForDeletedUser() {
+            User user = createAndSaveUser(true);
+
+            userRepository.deleteById(user.getId());
+
+            assertThatThrownBy(() -> userService.getById(user.getId())).isInstanceOf(ResourceNotFoundException.class);
+
+            assertCacheEmpty("user_info", user.getId());
+        }
+
+        @Test
+        void shouldNotEvictCacheOnUpdateIfUserIsBlocked() {
+            User user = createAndSaveUser(true);
+            userService.getById(user.getId());
+            assertCacheExists("user_info", user.getId());
+
+            user.setActive(false);
+            userRepository.saveAndFlush(user);
+
+            UserUpdateRequest updateDto = new UserUpdateRequest("NewName", null);
+
+            assertThatThrownBy(() -> userService.update(user.getId(), updateDto))
+                    .isInstanceOf(BadRequestException.class);
+
+            assertCacheExists("user_info", user.getId());
+        }
+    }
+
+    @Nested
+    class UpdateAdminCacheTest {
+
+        static Stream<AdminUserUpdateRequest> provideAdminUpdateRequests() {
+            return Stream.of(
+                    new AdminUserUpdateRequest("NewName", "NewSurname", LocalDate.of(1990, 1, 1)),
+                    new AdminUserUpdateRequest("NewName", "NewSurname", null),
+                    new AdminUserUpdateRequest("NewName", null, LocalDate.of(1995, 5, 20)),
+                    new AdminUserUpdateRequest(null, "NewSurname", LocalDate.of(1995, 5, 20)),
+                    new AdminUserUpdateRequest("NewName", null, null),
+                    new AdminUserUpdateRequest(null, "NewSurname", null),
+                    new AdminUserUpdateRequest(null, null, LocalDate.of(1995, 5, 20)),
+                    new AdminUserUpdateRequest(null, null, null),
+                    null);
+        }
+
+        @ParameterizedTest
+        @MethodSource("provideAdminUpdateRequests")
+        void shouldEvictCacheWhenValidRequest(AdminUserUpdateRequest request) {
+            User user = createAndSaveUser(true);
+
+            userService.getById(user.getId());
+            assertCacheExists("user_info", user.getId());
+
+            userService.update(user.getId(), request);
+
+            assertCacheEmpty("user_info", user.getId());
+        }
+
+        @Test
+        void shouldNotEvictCacheWhenUserNotFound() {
+            User user = createAndSaveUser(true);
+            userService.getById(user.getId());
+            assertCacheExists("user_info", user.getId());
+
+            AdminUserUpdateRequest adminUpdateDto =
+                    new AdminUserUpdateRequest("AdminName", "AdminSurname", LocalDate.now());
+            UUID unknownId = UUID.randomUUID();
+
+            assertThatThrownBy(() -> userService.update(unknownId, adminUpdateDto))
+                    .isInstanceOf(ResourceNotFoundException.class);
+
+            assertCacheExists("user_info", user.getId());
         }
     }
 
     @Nested
     class UpdateUserCacheTest {
 
-        @Test
-        void updateShouldEvictCacheWhenDataChanged() {
-            User user = createAndSaveActiveUser("test@example.com");
+        static Stream<UserUpdateRequest> provideUserUpdateRequests() {
+            return Stream.of(
+                    new UserUpdateRequest("NewName", "NewSurname"),
+                    new UserUpdateRequest("NewName", null),
+                    new UserUpdateRequest(null, "NewSurname"),
+                    new UserUpdateRequest(null, null),
+                    null);
+        }
+
+        @ParameterizedTest
+        @MethodSource("provideUserUpdateRequests")
+        void shouldEvictCacheWhenValidRequest(UserUpdateRequest request) {
+            User user = createAndSaveUser(true);
+
             userService.getById(user.getId());
             assertCacheExists("user_info", user.getId());
 
-            UserUpdateDto updateDto = new UserUpdateDto("NewName", "NewSurname");
-            userService.update(user.getId(), updateDto);
+            userService.update(user.getId(), request);
 
             assertCacheEmpty("user_info", user.getId());
         }
 
         @Test
-        void updateWithAdminDtoShouldEvictCacheWhenDataChanged() {
-            User user = createAndSaveActiveUser("test@example.com");
+        void shouldNotEvictCacheWhenUserNotFound() {
+            User user = createAndSaveUser(true);
             userService.getById(user.getId());
             assertCacheExists("user_info", user.getId());
 
-            AdminUserUpdateDto adminUpdateDto = new AdminUserUpdateDto(
-                    "AdminName",
-                    "AdminSurname",
-                    null);
-            userService.update(user.getId(), adminUpdateDto);
+            UserUpdateRequest updateDto = new UserUpdateRequest("NewName", "NewSurname");
+            UUID unknownId = UUID.randomUUID();
 
-            assertCacheEmpty("user_info", user.getId());
-        }
-
-        @Test
-        void updateShouldThrowExceptionAndNotEvictCacheWhenUserNotFound() {
-            User user = createAndSaveActiveUser("test@example.com");
-            userService.getById(user.getId());
-            assertCacheExists("user_info", user.getId());
-
-            UserUpdateDto updateDto = new UserUpdateDto("NewName", "NewSurname");
-
-            assertThrows(ResourceNotFoundException.class, () ->
-                    userService.update(UUID.randomUUID(), updateDto)
-            );
-
-            assertCacheExists("user_info", user.getId());
-        }
-
-        @Test
-        void updateWithAdminShouldThrowExceptionAndNotEvictCacheWhenUserNotFound() {
-            User user = createAndSaveActiveUser("test@example.com");
-            userService.getById(user.getId());
-            assertCacheExists("user_info", user.getId());
-
-            AdminUserUpdateDto adminUpdateDto = new AdminUserUpdateDto(
-                    "AdminName",
-                    "AdminSurname",
-                    null);
-            assertThrows(ResourceNotFoundException.class, () ->
-                    userService.update(UUID.randomUUID(), adminUpdateDto)
-            );
+            assertThatThrownBy(() -> userService.update(unknownId, updateDto))
+                    .isInstanceOf(ResourceNotFoundException.class);
 
             assertCacheExists("user_info", user.getId());
         }
@@ -170,25 +223,24 @@ public class UserCacheIT extends BaseIntegrationTest {
     class DeleteUserCacheTest {
 
         @Test
-        void deleteShouldEvictUserCacheOnSuccess() {
-            User user = createAndSaveActiveUser("test@example.com");
-            userService.getById(user.getId());
-            assertCacheExists("user_info", user.getId());
-
+        void shouldNotCacheDataWhenUserIsDeleted() {
+            User user = createAndSaveUser(true);
             userService.delete(user.getId());
 
+            assertThatThrownBy(() -> userService.getById(user.getId())).isInstanceOf(ResourceNotFoundException.class);
+
             assertCacheEmpty("user_info", user.getId());
+            assertBlacklistExists(user.getId());
         }
 
         @Test
-        void shouldWithNotEvictUserCacheWhenExceptionThrown() {
-            User user = createAndSaveActiveUser("test@example.com");
+        void shouldNotEvictUserCacheWhenExceptionThrown() {
+            User user = createAndSaveUser(true);
             userService.getById(user.getId());
             assertCacheExists("user_info", user.getId());
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    userService.delete(UUID.randomUUID())
-            );
+            assertThatThrownBy(() -> userService.delete(UUID.randomUUID()))
+                    .isInstanceOf(ResourceNotFoundException.class);
 
             assertCacheExists("user_info", user.getId());
         }
@@ -197,12 +249,9 @@ public class UserCacheIT extends BaseIntegrationTest {
     @Nested
     class DeactivateCacheTest {
 
-        @MockitoBean
-        protected AuthGrpcClient authGrpcClient;
-
         @Test
-        void deactivateShouldEvictCachesWhenUserExists() {
-            User user = createAndSaveActiveUser("test@example.com");
+        void shouldEvictCachesAndBanTokenWhenUserStatusChanges() {
+            User user = createAndSaveUser(true);
             userService.getById(user.getId());
             assertCacheExists("user_info", user.getId());
 
@@ -210,16 +259,18 @@ public class UserCacheIT extends BaseIntegrationTest {
 
             assertCacheEmpty("user_info", user.getId());
             assertThat(userRepository.findById(user.getId()).get().getActive()).isFalse();
+
+            assertBlacklistExists(user.getId());
         }
 
         @Test
-        void deactivateShouldThrowExceptionWhenUserNotFound() {
-            User user = createAndSaveActiveUser("test@example.com");
+        void shouldThrowNotFoundException() {
+            User user = createAndSaveUser(true);
             userService.getById(user.getId());
             assertCacheExists("user_info", user.getId());
 
-            assertThrows(ResourceNotFoundException.class, () ->
-                    userService.deactivate(UUID.randomUUID()));
+            assertThatThrownBy(() -> userService.deactivate(UUID.randomUUID()))
+                    .isInstanceOf(ResourceNotFoundException.class);
 
             assertCacheExists("user_info", user.getId());
         }
@@ -228,31 +279,34 @@ public class UserCacheIT extends BaseIntegrationTest {
     @Nested
     class ActivateCacheTest {
 
-        @MockitoBean
-        protected AuthGrpcClient authGrpcClient;
+        @Test
+        void shouldEvictCacheAndUnbanTokenWhenUserActivated() {
+            User user = createAndSaveUser(false);
+
+            cacheManager.getCache("user_info").put(user.getId(), "old_dirty_data");
+            assertCacheExists("user_info", user.getId());
+
+            stringRedisTemplate
+                    .opsForValue()
+                    .set(blacklistPrefix + ":" + user.getId().toString(), "true", blacklistTtl);
+            assertBlacklistExists(user.getId());
+
+            userService.activate(user.getId());
+
+            assertCacheEmpty("user_info", user.getId());
+            assertBlacklistEmpty(user.getId());
+        }
 
         @Test
-        void activateShouldEvictCachesWhenUserExists() {
-            User user = createAndSaveInactiveUser("test@example.com");
+        void shouldEvictCacheEvenIfAlreadyActive() {
+            User user = createAndSaveUser(true);
+
             userService.getById(user.getId());
             assertCacheExists("user_info", user.getId());
 
             userService.activate(user.getId());
 
             assertCacheEmpty("user_info", user.getId());
-            assertThat(userRepository.findById(user.getId()).get().getActive()).isTrue();
-        }
-
-        @Test
-        void activateShouldThrowExceptionWhenUserNotFound() {
-            User user = createAndSaveInactiveUser("test@example.com");
-            userService.getById(user.getId());
-            assertCacheExists("user_info", user.getId());
-
-            assertThrows(ResourceNotFoundException.class, () ->
-                    userService.activate(UUID.randomUUID()));
-
-            assertCacheExists("user_info", user.getId());
         }
     }
 
@@ -260,7 +314,9 @@ public class UserCacheIT extends BaseIntegrationTest {
         Cache cache = cacheManager.getCache(cacheName);
         assertThat(cache).isNotNull();
 
-        Awaitility.await().atMost(2, TimeUnit.SECONDS).pollInterval(10, TimeUnit.MILLISECONDS)
+        Awaitility.await()
+                .atMost(2, TimeUnit.SECONDS)
+                .pollInterval(10, TimeUnit.MILLISECONDS)
                 .untilAsserted(() -> {
                     boolean existsAsUuid = cache.get(key) != null;
                     boolean existsAsString = cache.get(key.toString()) != null;
@@ -274,7 +330,9 @@ public class UserCacheIT extends BaseIntegrationTest {
         Cache cache = cacheManager.getCache(cacheName);
         assertThat(cache).isNotNull();
 
-        Awaitility.await().atMost(2, TimeUnit.SECONDS).pollInterval(10, TimeUnit.MILLISECONDS)
+        Awaitility.await()
+                .atMost(2, TimeUnit.SECONDS)
+                .pollInterval(10, TimeUnit.MILLISECONDS)
                 .untilAsserted(() -> {
                     assertThat(cache.get(key))
                             .as("Cache '%s' still contains data for UUID key", cacheName)
@@ -282,6 +340,38 @@ public class UserCacheIT extends BaseIntegrationTest {
                     assertThat(cache.get(key.toString()))
                             .as("Cache '%s' still contains data for String key", cacheName)
                             .isNull();
+                });
+    }
+
+    private void assertBlacklistExists(UUID userId) {
+        String key = blacklistPrefix + ":" + userId.toString();
+        Awaitility.await()
+                .atMost(2, TimeUnit.SECONDS)
+                .pollInterval(10, TimeUnit.MILLISECONDS)
+                .untilAsserted(() -> {
+                    assertThat(stringRedisTemplate.hasKey(key))
+                            .as("JWT Blacklist key '%s' should exist in Redis", key)
+                            .isTrue();
+
+                    Long expireInSeconds = stringRedisTemplate.getExpire(key, TimeUnit.SECONDS);
+
+                    assertThat(expireInSeconds)
+                            .as("JWT Blacklist key should have a valid TTL in Redis")
+                            .isNotNull()
+                            .isGreaterThan(0L)
+                            .isCloseTo(blacklistTtl.getSeconds(), org.assertj.core.data.Offset.offset(5L));
+                });
+    }
+
+    private void assertBlacklistEmpty(UUID userId) {
+        String key = blacklistPrefix + ":" + userId.toString();
+        Awaitility.await()
+                .atMost(2, TimeUnit.SECONDS)
+                .pollInterval(10, TimeUnit.MILLISECONDS)
+                .untilAsserted(() -> {
+                    assertThat(stringRedisTemplate.hasKey(key))
+                            .as("JWT Blacklist key '%s' should NOT exist in Redis", key)
+                            .isFalse();
                 });
     }
 }

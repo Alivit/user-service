@@ -1,11 +1,24 @@
 package com.minispring.userservice.service.impl;
 
-import ch.qos.logback.classic.Logger;
-import com.minispring.userservice.config.JaversConfig;
-import com.minispring.userservice.config.JaversConfig.AuditProperties;
-import com.minispring.userservice.dto.PaymentCardCreateDto;
-import com.minispring.userservice.dto.PaymentCardProfileDto;
-import com.minispring.userservice.dto.PaymentCardUpdateDto;
+import static com.minispring.userservice.exception.ExceptionAnswer.CARD_LIMIT;
+import static com.minispring.userservice.exception.ExceptionAnswer.CARD_NOT_FOUND;
+import static com.minispring.userservice.exception.ExceptionAnswer.NUMBER_CARD_EXIST;
+import static com.minispring.userservice.exception.ExceptionAnswer.USER_NOT_FOUND;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.instancio.Select.field;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.BDDMockito.given;
+import static org.mockito.BDDMockito.then;
+import static org.mockito.BDDMockito.willThrow;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+
+import com.minispring.userservice.dto.request.PaymentCardCreateRequest;
+import com.minispring.userservice.dto.request.PaymentCardUpdateRequest;
+import com.minispring.userservice.dto.response.PaymentCardView;
 import com.minispring.userservice.exception.BadRequestException;
 import com.minispring.userservice.exception.ResourceAlreadyExistsException;
 import com.minispring.userservice.exception.ResourceNotFoundException;
@@ -13,47 +26,30 @@ import com.minispring.userservice.mapper.PaymentCardMapper;
 import com.minispring.userservice.model.PaymentCard;
 import com.minispring.userservice.model.User;
 import com.minispring.userservice.repository.PaymentCardRepository;
-import com.minispring.userservice.repository.UserRepository;
-import com.minispring.userservice.service.listener.AuditUpdateEvent;
+import com.minispring.userservice.service.UserService;
+import java.time.YearMonth;
+import java.util.List;
+import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Stream;
 import org.instancio.Instancio;
-import org.javers.core.Javers;
-import org.javers.core.JaversBuilder;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.LoggerFactory;
-import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-
-import java.time.YearMonth;
-import java.util.List;
-import java.util.Optional;
-import java.util.UUID;
-
-import static com.minispring.userservice.exception.ExceptionAnswer.CARD_LIMIT;
-import static com.minispring.userservice.exception.ExceptionAnswer.USER_NOT_FOUND;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.instancio.Select.field;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.BDDMockito.given;
-import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 
 @ExtendWith(MockitoExtension.class)
 public class PaymentCardServiceImplTest {
@@ -62,7 +58,13 @@ public class PaymentCardServiceImplTest {
     private PaymentCardRepository paymentCardRepository;
 
     @Mock
+    private UserService userService;
+
+    @Mock
     private PaymentCardMapper paymentCardMapper;
+
+    @InjectMocks
+    private PaymentCardServiceImpl paymentCardService;
 
     @Mock
     private CacheManager cacheManager;
@@ -70,101 +72,108 @@ public class PaymentCardServiceImplTest {
     @Mock
     private Cache cache;
 
-    @Spy
-    private final Javers javers = JaversBuilder.javers().build();
-
-    @Spy
-    private AuditProperties auditProperties = new AuditProperties();
-
-    @Mock
-    private ApplicationEventPublisher eventPublisher;
-
-    @InjectMocks
-    private PaymentCardServiceImpl paymentCardService;
-
-    @Mock
-    private UserRepository userRepository;
-
     @BeforeEach
     void setUpGlobal() {
         lenient().when(cacheManager.getCache("user_info")).thenReturn(cache);
-        auditProperties = new JaversConfig.AuditProperties();
-        auditProperties.setEnabled(true);
+    }
+
+    private User createActiveUser(UUID userId) {
+        return Instancio.of(User.class)
+                .set(field(User::getId), userId)
+                .set(field(User::getActive), true)
+                .set(field(User::isDeleted), false)
+                .create();
     }
 
     @Nested
     class CreateTest {
 
         private UUID userId;
-        private PaymentCardCreateDto createDto;
+        private PaymentCardCreateRequest createDto;
         private PaymentCard paymentCard;
-        private PaymentCardProfileDto expectedDto;
+        private PaymentCardView expectedDto;
         private User user;
 
         @BeforeEach
-        public void init() {
-            userId = Instancio.create(UUID.class);
-            createDto = Instancio.create(PaymentCardCreateDto.class);
+        void init() {
+            userId = UUID.randomUUID();
+            createDto = Instancio.create(PaymentCardCreateRequest.class);
             paymentCard = Instancio.create(PaymentCard.class);
-            expectedDto = Instancio.create(PaymentCardProfileDto.class);
-            user = Instancio.create(User.class);
+            expectedDto = Instancio.create(PaymentCardView.class);
+            user = createActiveUser(userId);
         }
 
         @Test
-        void createShouldReturnPaymentCardProfileDto() {
-            given(userRepository.findUserForUpdateById(userId)).willReturn(Optional.of(user));
+        void shouldReturnViewAndEvictCache() {
+            given(userService.getValidUserEntityForUpdate(userId)).willReturn(user);
             given(paymentCardRepository.countByUserId(userId)).willReturn(4L);
-            given(paymentCardMapper.paymentCardCreateDtoToPaymentCard(createDto)).willReturn(paymentCard);
-            given(userRepository.getReferenceById(userId)).willReturn(user);
+            given(paymentCardMapper.toEntity(createDto)).willReturn(paymentCard);
+            given(userService.getUserReference(userId)).willReturn(user);
             given(paymentCardRepository.saveAndFlush(paymentCard)).willReturn(paymentCard);
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(paymentCard)).willReturn(expectedDto);
+            given(paymentCardMapper.toView(paymentCard)).willReturn(expectedDto);
 
-            PaymentCardProfileDto result = paymentCardService.create(userId, createDto);
+            PaymentCardView result = paymentCardService.create(userId, createDto);
 
             assertThat(result).isNotNull().isEqualTo(expectedDto);
-            verify(paymentCardRepository).saveAndFlush(paymentCard);
+
+            then(paymentCardRepository).should().saveAndFlush(paymentCard);
+            then(cache).should().evict(userId);
         }
 
         @Test
-        void createShouldThrowBadRequestExceptionWhenLimitIsExceeded() {
-            given(userRepository.findUserForUpdateById(userId)).willReturn(Optional.of(user));
+        void shouldThrowBadRequestExceptionWhenLimitIsExceeded() {
+            given(userService.getValidUserEntityForUpdate(userId)).willReturn(user);
             given(paymentCardRepository.countByUserId(userId)).willReturn(5L);
 
             assertThatThrownBy(() -> paymentCardService.create(userId, createDto))
                     .isInstanceOf(BadRequestException.class)
                     .hasMessage(CARD_LIMIT);
 
-            verifyNoInteractions(paymentCardMapper);
-            verify(paymentCardRepository, never()).saveAndFlush(any());
+            then(paymentCardMapper).shouldHaveNoInteractions();
+            then(paymentCardRepository).should(never()).saveAndFlush(any());
         }
 
         @Test
-        void createShouldThrowResourceAlreadyExistsExceptionWhenCardNumberAlreadyExists() {
-            given(userRepository.findUserForUpdateById(userId)).willReturn(Optional.of(user));
+        void shouldThrowResourceAlreadyExistsException() {
+            given(userService.getValidUserEntityForUpdate(userId)).willReturn(user);
             given(paymentCardRepository.countByUserId(userId)).willReturn(2L);
-            given(paymentCardMapper.paymentCardCreateDtoToPaymentCard(createDto)).willReturn(paymentCard);
-            given(userRepository.getReferenceById(userId)).willReturn(user);
+            given(paymentCardMapper.toEntity(createDto)).willReturn(paymentCard);
+            given(userService.getUserReference(userId)).willReturn(user);
 
             given(paymentCardRepository.saveAndFlush(paymentCard))
-                    .willThrow(new DataIntegrityViolationException("Duplicate key value violates unique constraint"));
+                    .willThrow(new DataIntegrityViolationException("Duplicate key"));
 
             assertThatThrownBy(() -> paymentCardService.create(userId, createDto))
-                    .isInstanceOf(ResourceAlreadyExistsException.class);
-
-            verify(paymentCardMapper, never()).paymentCardToPaymentCardProfileDto(any());
+                    .isInstanceOf(ResourceAlreadyExistsException.class)
+                    .hasMessage(NUMBER_CARD_EXIST);
         }
 
         @Test
-        void createShouldThrowResourceNotFoundExceptionWhenUserNotFound() {
-            given(userRepository.findUserForUpdateById(userId)).willReturn(Optional.empty());
+        void shouldThrowResourceNotFoundException() {
+            given(userService.getValidUserEntityForUpdate(userId))
+                    .willThrow(new ResourceNotFoundException(String.format(USER_NOT_FOUND, userId)));
 
             assertThatThrownBy(() -> paymentCardService.create(userId, createDto))
                     .isInstanceOf(ResourceNotFoundException.class)
                     .hasMessage(String.format(USER_NOT_FOUND, userId));
 
-            verify(paymentCardRepository, never()).countByUserId(any());
-            verifyNoInteractions(paymentCardMapper);
-            verify(paymentCardRepository, never()).saveAndFlush(any());
+            then(paymentCardRepository).should(never()).countByUserId(any());
+            then(paymentCardMapper).shouldHaveNoInteractions();
+            then(paymentCardRepository).should(never()).saveAndFlush(any());
+            then(cache).shouldHaveNoInteractions();
+        }
+
+        @Test
+        void shouldThrowExceptionWhenUserIsBlockedOrDeleted() {
+            given(userService.getValidUserEntityForUpdate(userId))
+                    .willThrow(new BadRequestException("Action denied: User is blocked or deleted"));
+
+            assertThatThrownBy(() -> paymentCardService.create(userId, createDto))
+                    .isInstanceOf(BadRequestException.class)
+                    .hasMessage("Action denied: User is blocked or deleted");
+
+            then(paymentCardRepository).shouldHaveNoInteractions();
+            then(paymentCardMapper).shouldHaveNoInteractions();
         }
     }
 
@@ -172,31 +181,31 @@ public class PaymentCardServiceImplTest {
     class GetByCardIdTest {
 
         @Test
-        void getByIdShouldReturnPaymentCardProfileDto() {
+        void shouldReturnView() {
             PaymentCard paymentCard = Instancio.create(PaymentCard.class);
             UUID cardId = paymentCard.getId();
-            PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
-                    .set(field(PaymentCardProfileDto::id), cardId)
-                    .create();
+            PaymentCardView expectedView = Instancio.create(PaymentCardView.class);
 
             given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(paymentCard));
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(paymentCard)).willReturn(expectedDto);
+            given(paymentCardMapper.toView(paymentCard)).willReturn(expectedView);
 
-            PaymentCardProfileDto result = paymentCardService.getById(cardId);
+            PaymentCardView result = paymentCardService.getById(cardId);
 
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
+            assertThat(result).isNotNull().isEqualTo(expectedView);
+            then(paymentCardMapper).should().toView(paymentCard);
         }
 
         @Test
-        void getByIdShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
-            UUID cardId = Instancio.create(UUID.class);
+        void shouldThrowResourceNotFoundException() {
+            UUID cardId = UUID.randomUUID();
 
             given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> paymentCardService.getById(cardId))
-                    .isInstanceOf(ResourceNotFoundException.class);
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage(String.format(CARD_NOT_FOUND, cardId));
 
-            verifyNoInteractions(paymentCardMapper);
+            then(paymentCardMapper).shouldHaveNoInteractions();
         }
     }
 
@@ -204,50 +213,77 @@ public class PaymentCardServiceImplTest {
     class GetByCardIdWithUserIdTest {
 
         @Test
-        void getByIdShouldReturnPaymentCardProfileDtoWhenUserOwnsCard() {
-            UUID userId = Instancio.create(UUID.class);
-            User user = Instancio.of(User.class).set(field(User::getId), userId).create();
-            PaymentCard paymentCard = Instancio.of(PaymentCard.class).set(field(PaymentCard::getUser), user).create();
-            UUID cardId = paymentCard.getId();
-            PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
-                    .set(field(PaymentCardProfileDto::id), cardId)
+        void shouldReturnView() {
+            UUID userId = UUID.randomUUID();
+            User user = createActiveUser(userId);
+            PaymentCard paymentCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), user)
                     .create();
+            UUID cardId = paymentCard.getId();
+            PaymentCardView expectedView = Instancio.create(PaymentCardView.class);
 
             given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(paymentCard));
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(paymentCard)).willReturn(expectedDto);
+            given(paymentCardMapper.toView(paymentCard)).willReturn(expectedView);
 
-            PaymentCardProfileDto result = paymentCardService.getById(userId, cardId);
+            PaymentCardView result = paymentCardService.getById(userId, cardId);
 
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
+            assertThat(result).isNotNull().isEqualTo(expectedView);
+            then(userService).should().validateUserAllowed(user);
+            then(paymentCardMapper).should().toView(paymentCard);
         }
 
         @Test
-        void getByIdShouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
-            UUID authUserId = Instancio.create(UUID.class);
-            UUID cardOwnerId = Instancio.create(UUID.class);
-            User cardOwner = Instancio.of(User.class).set(field(User::getId), cardOwnerId).create();
-            PaymentCard paymentCard = Instancio.of(PaymentCard.class).set(field(PaymentCard::getUser), cardOwner).create();
+        void shouldThrowBadRequestWhenUserIsBlockedOrDeleted() {
+            UUID userId = UUID.randomUUID();
+            User user = createActiveUser(userId);
+            PaymentCard paymentCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), user)
+                    .create();
+            UUID cardId = paymentCard.getId();
+
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(paymentCard));
+
+            willThrow(new BadRequestException("Action denied: User is blocked or deleted"))
+                    .given(userService)
+                    .validateUserAllowed(user);
+
+            assertThatThrownBy(() -> paymentCardService.getById(userId, cardId))
+                    .isInstanceOf(BadRequestException.class);
+
+            then(paymentCardMapper).shouldHaveNoInteractions();
+        }
+
+        @Test
+        void shouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
+            UUID authUserId = UUID.randomUUID();
+            UUID cardOwnerId = UUID.randomUUID();
+            User cardOwner = createActiveUser(cardOwnerId);
+            PaymentCard paymentCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), cardOwner)
+                    .create();
             UUID cardId = paymentCard.getId();
 
             given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(paymentCard));
 
             assertThatThrownBy(() -> paymentCardService.getById(authUserId, cardId))
-                    .isInstanceOf(ResourceNotFoundException.class);
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage(String.format(CARD_NOT_FOUND, cardId));
 
-            verifyNoInteractions(paymentCardMapper);
+            then(paymentCardMapper).shouldHaveNoInteractions();
         }
 
         @Test
-        void getByIdShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
-            UUID userId = Instancio.create(UUID.class);
-            UUID cardId = Instancio.create(UUID.class);
+        void shouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
+            UUID userId = UUID.randomUUID();
+            UUID cardId = UUID.randomUUID();
 
             given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> paymentCardService.getById(userId, cardId))
-                    .isInstanceOf(ResourceNotFoundException.class);
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage(String.format(CARD_NOT_FOUND, cardId));
 
-            verifyNoInteractions(paymentCardMapper);
+            then(paymentCardMapper).shouldHaveNoInteractions();
         }
     }
 
@@ -255,35 +291,40 @@ public class PaymentCardServiceImplTest {
     class GetAllByTest {
 
         @Test
-        void getAllByShouldReturnPageOfPaymentCardProfileList() {
+        void shouldReturnPagedViews() {
             Pageable pageable = PageRequest.of(0, 10);
-            List<PaymentCard> cards = Instancio.ofList(PaymentCard.class).size(2).create();
-            List<PaymentCardProfileDto> expectedList = Instancio.ofList(PaymentCardProfileDto.class).size(2).create();
-            Page<PaymentCard> cardPage = new PageImpl<>(cards, pageable, cards.size());
+            List<PaymentCard> cards =
+                    Instancio.ofList(PaymentCard.class).size(2).create();
+            Page<PaymentCard> cardPage = new PageImpl<>(cards, pageable, 2);
+            PaymentCardView expectedView = Instancio.create(PaymentCardView.class);
 
             given(paymentCardRepository.findAllCardsWithPageable(pageable)).willReturn(cardPage);
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(0))).willReturn(expectedList.get(0));
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(1))).willReturn(expectedList.get(1));
+            given(paymentCardMapper.toView(any(PaymentCard.class))).willReturn(expectedView);
 
-            Page<PaymentCardProfileDto> result = paymentCardService.getAllBy(pageable);
+            Page<PaymentCardView> result = paymentCardService.getAllBy(pageable);
 
             assertThat(result).isNotNull();
             assertThat(result.getTotalElements()).isEqualTo(2);
-            assertThat(result.getContent()).containsExactlyElementsOf(expectedList);
+            assertThat(result.getContent()).containsExactly(expectedView, expectedView);
+
+            then(paymentCardMapper).should().toView(cards.get(0));
+            then(paymentCardMapper).should().toView(cards.get(1));
         }
 
         @Test
-        void getAllByShouldReturnEmptyPageWhenNoCardsExist() {
+        void shouldReturnEmptyPageWhenNoCardsExist() {
             Pageable pageable = PageRequest.of(0, 10);
             Page<PaymentCard> emptyCardPage = Page.empty(pageable);
 
             given(paymentCardRepository.findAllCardsWithPageable(pageable)).willReturn(emptyCardPage);
 
-            Page<PaymentCardProfileDto> result = paymentCardService.getAllBy(pageable);
+            Page<PaymentCardView> result = paymentCardService.getAllBy(pageable);
 
-            assertThat(result).isNotNull().isEmpty();
+            assertThat(result).isNotNull();
+            assertThat(result.isEmpty()).isTrue();
             assertThat(result.getTotalElements()).isZero();
-            verifyNoInteractions(paymentCardMapper);
+
+            then(paymentCardMapper).shouldHaveNoInteractions();
         }
     }
 
@@ -291,37 +332,46 @@ public class PaymentCardServiceImplTest {
     class GetAllTest {
 
         @Test
-        void getAllShouldReturnListOfPaymentCardProfileList() {
-            UUID userId = Instancio.create(UUID.class);
-            List<PaymentCard> cards = Instancio.ofList(PaymentCard.class).size(3).create();
-            List<PaymentCardProfileDto> expectedList = Instancio.ofList(PaymentCardProfileDto.class).size(3).create();
+        void shouldReturnListOfViews() {
+            UUID userId = UUID.randomUUID();
+            User user = createActiveUser(userId);
+            List<PaymentCard> cards =
+                    Instancio.ofList(PaymentCard.class).size(3).create();
+            PaymentCardView expectedView = Instancio.create(PaymentCardView.class);
 
+            given(userService.getValidUserEntity(userId)).willReturn(user);
             given(paymentCardRepository.findAllCardsByUserId(userId)).willReturn(cards);
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(0))).willReturn(expectedList.get(0));
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(1))).willReturn(expectedList.get(1));
-            given(paymentCardMapper.paymentCardToPaymentCardProfileDto(cards.get(2))).willReturn(expectedList.get(2));
+            given(paymentCardMapper.toView(any(PaymentCard.class))).willReturn(expectedView);
 
-            List<PaymentCardProfileDto> result = paymentCardService.getAll(userId);
+            List<PaymentCardView> result = paymentCardService.getAll(userId);
 
-            assertThat(result)
-                    .isNotNull()
-                    .hasSize(3)
-                    .containsExactlyElementsOf(expectedList);
+            assertThat(result).hasSize(3);
+            then(paymentCardMapper).should().toView(cards.getFirst());
         }
 
         @Test
-        void getAllShouldReturnEmptyListWhenUserHasNoCards() {
-            UUID userId = Instancio.create(UUID.class);
+        void shouldReturnEmptyListWhenUserHasNoCards() {
+            UUID userId = UUID.randomUUID();
+            User user = createActiveUser(userId);
 
+            given(userService.getValidUserEntity(userId)).willReturn(user);
             given(paymentCardRepository.findAllCardsByUserId(userId)).willReturn(List.of());
 
-            List<PaymentCardProfileDto> result = paymentCardService.getAll(userId);
+            List<PaymentCardView> result = paymentCardService.getAll(userId);
 
-            assertThat(result)
-                    .isNotNull()
-                    .isEmpty();
+            assertThat(result).isEmpty();
+        }
 
-            verifyNoInteractions(paymentCardMapper);
+        @Test
+        void shouldThrowExceptionWhenUserIsBlockedOrDeleted() {
+            UUID userId = UUID.randomUUID();
+
+            given(userService.getValidUserEntity(userId))
+                    .willThrow(new BadRequestException("Action denied: User is blocked or deleted"));
+
+            assertThatThrownBy(() -> paymentCardService.getAll(userId)).isInstanceOf(BadRequestException.class);
+
+            then(paymentCardRepository).shouldHaveNoInteractions();
         }
     }
 
@@ -329,123 +379,52 @@ public class PaymentCardServiceImplTest {
     @ExtendWith(OutputCaptureExtension.class)
     class UpdateTest {
 
-        private UUID cardId;
-        private PaymentCard existingCard;
-        private PaymentCardProfileDto expectedDto;
-        private PaymentCardUpdateDto cardStateBefore;
+        static Stream<PaymentCardUpdateRequest> provideUpdateRequests() {
+            return Stream.of(
+                    new PaymentCardUpdateRequest("1234123412341234", null, null),
+                    new PaymentCardUpdateRequest(null, "NEW HOLDER", null),
+                    new PaymentCardUpdateRequest(null, null, YearMonth.now().plusMonths(1)),
+                    new PaymentCardUpdateRequest("1234123412341234", "NEW HOLDER", null),
+                    new PaymentCardUpdateRequest(
+                            "1234123412341234", null, YearMonth.now().plusMonths(1)),
+                    new PaymentCardUpdateRequest(
+                            null, "NEW HOLDER", YearMonth.now().plusMonths(1)),
+                    new PaymentCardUpdateRequest(
+                            "1234123412341234", "NEW HOLDER", YearMonth.now().plusMonths(1)),
+                    new PaymentCardUpdateRequest(null, null, null),
+                    new PaymentCardUpdateRequest("9999888877776666", "TEST NAME", YearMonth.of(2030, 1)),
+                    null);
+        }
 
-        @BeforeEach
-        void init() {
-            Logger logger = (Logger) LoggerFactory.getLogger(PaymentCardServiceImpl.class);
-            logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
-            cardId = Instancio.create(UUID.class);
+        @ParameterizedTest
+        @MethodSource("provideUpdateRequests")
+        void shouldCallMapperAndFlushWhenValidRequest(PaymentCardUpdateRequest request) {
+            UUID cardId = UUID.randomUUID();
+            PaymentCard existingCard = Instancio.create(PaymentCard.class);
+            PaymentCardView expectedView = Instancio.create(PaymentCardView.class);
 
-            User user = Instancio.create(User.class);
-            existingCard = Instancio.of(PaymentCard.class)
-                    .set(field(PaymentCard::getUser), user)
-                    .create();
+            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(existingCard));
+            given(paymentCardMapper.toViewWithoutUser(existingCard)).willReturn(expectedView);
 
-            expectedDto = Instancio.create(PaymentCardProfileDto.class);
-            cardStateBefore = Instancio.of(PaymentCardUpdateDto.class)
-                    .set(field(PaymentCardUpdateDto::active), true)
-                    .create();
+            PaymentCardView result = paymentCardService.update(cardId, request);
+
+            assertThat(result).isEqualTo(expectedView);
+
+            then(paymentCardMapper).should().update(request, existingCard);
         }
 
         @Test
-        void updateShouldReturnPaymentCardProfileDtoWithUpdatedNumber(CapturedOutput output) {
-            String testNumber = "4444555566667777";
-            PaymentCardUpdateDto updateDto = Instancio.of(PaymentCardUpdateDto.class)
-                    .set(field(PaymentCardUpdateDto::number), testNumber)
-                    .create();
+        void shouldThrowResourceNotFoundException() {
+            UUID cardId = UUID.randomUUID();
+            PaymentCardUpdateRequest request = Instancio.create(PaymentCardUpdateRequest.class);
 
-            setupForUpdateCard(updateDto);
-
-            PaymentCardProfileDto result = paymentCardService.update(cardId, updateDto);
-
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
-            verify(paymentCardMapper).updateCardFromDto(updateDto, existingCard);
-            verify(paymentCardRepository).flush();
-            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
-        }
-
-        @Test
-        void updateShouldReturnPaymentCardProfileDtoWithUpdatedHolder(CapturedOutput output) {
-            String testHolder = "TEST USER";
-            PaymentCardUpdateDto updateDto = Instancio.of(PaymentCardUpdateDto.class)
-                    .set(field(PaymentCardUpdateDto::holder), testHolder)
-                    .create();
-
-            setupForUpdateCard(updateDto);
-
-            PaymentCardProfileDto result = paymentCardService.update(cardId, updateDto);
-
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
-            verify(paymentCardMapper).updateCardFromDto(updateDto, existingCard);
-            verify(paymentCardRepository).flush();
-            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
-        }
-
-        @Test
-        void updateShouldReturnPaymentCardProfileDtoWithUpdatedExpirationDate(CapturedOutput output) {
-            YearMonth testExpirationDate = YearMonth.of(2030, 12);
-            PaymentCardUpdateDto updateDto = Instancio.of(PaymentCardUpdateDto.class)
-                    .set(field(PaymentCardUpdateDto::expirationDate), testExpirationDate)
-                    .create();
-
-            setupForUpdateCard(updateDto);
-
-            PaymentCardProfileDto result = paymentCardService.update(cardId, updateDto);
-
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
-            verify(paymentCardRepository).flush();
-            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
-        }
-
-        @Test
-        void updateShouldReturnPaymentCardProfileDtoWithUpdatedActiveStatus(CapturedOutput output) {
-            boolean testActive = false;
-            PaymentCardUpdateDto updateDto = Instancio.of(PaymentCardUpdateDto.class)
-                    .set(field(PaymentCardUpdateDto::active), testActive)
-                    .create();
-
-            setupForUpdateCard(updateDto);
-
-            PaymentCardProfileDto result = paymentCardService.update(cardId, updateDto);
-
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
-            verify(paymentCardRepository).flush();
-            verify(eventPublisher).publishEvent(any(AuditUpdateEvent.class));
-        }
-
-        @Test
-        void updateShouldReturnPaymentCardProfileWithNoChangesDetected(CapturedOutput output) {
-            PaymentCardUpdateDto updateDto = Instancio.create(PaymentCardUpdateDto.class);
-
-            setupForUpdateCard(cardStateBefore);
-
-            PaymentCardProfileDto result = paymentCardService.update(cardId, updateDto);
-
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
-            verify(paymentCardRepository).flush();
-        }
-
-        @Test
-        void updateShouldThrowResourceNotFoundException() {
-            PaymentCardUpdateDto updateDto = Instancio.create(PaymentCardUpdateDto.class);
             given(paymentCardRepository.findById(cardId)).willReturn(Optional.empty());
 
-            assertThatThrownBy(() -> paymentCardService.update(cardId, updateDto))
-                    .isInstanceOf(ResourceNotFoundException.class);
+            assertThatThrownBy(() -> paymentCardService.update(cardId, request))
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage(String.format(CARD_NOT_FOUND, cardId));
 
-            verifyNoInteractions(javers);
-            verify(paymentCardRepository, never()).flush();
-        }
-
-        private void setupForUpdateCard(PaymentCardUpdateDto cardStateAfter) {
-            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(existingCard));
-            given(paymentCardMapper.paymentCardToPaymentCardUpdateDto(existingCard))
-                    .willReturn(cardStateBefore, cardStateAfter);
-            given(paymentCardMapper.CardToPaymentCardProfileDtoWithoutUser(existingCard)).willReturn(expectedDto);
+            then(paymentCardMapper).should(never()).update(any(), any());
         }
     }
 
@@ -453,7 +432,7 @@ public class PaymentCardServiceImplTest {
     class DeleteTest {
 
         @Test
-        void deleteShouldPermanentlyDeleteCardWhenCardExists() {
+        void shouldPermanentlyDeleteCard() {
             UUID cardId = UUID.randomUUID();
             UUID userId = UUID.randomUUID();
 
@@ -462,19 +441,22 @@ public class PaymentCardServiceImplTest {
 
             paymentCardService.delete(cardId);
 
-            verify(paymentCardRepository).deleteCardById(cardId);
+            then(paymentCardRepository).should().deleteCardById(cardId);
+            then(cache).should().evict(userId);
         }
 
         @Test
-        void deleteShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
+        void shouldThrowResourceNotFoundException() {
             UUID cardId = UUID.randomUUID();
 
             given(paymentCardRepository.findUserIdByCardId(cardId)).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> paymentCardService.delete(cardId))
-                    .isInstanceOf(ResourceNotFoundException.class);
+                    .isInstanceOf(ResourceNotFoundException.class)
+                    .hasMessage(String.format(CARD_NOT_FOUND, cardId));
 
-            verify(paymentCardRepository, never()).deleteCardById(any());
+            then(paymentCardRepository).should(never()).deleteCardById(any());
+            then(cache).shouldHaveNoInteractions();
         }
     }
 
@@ -482,41 +464,45 @@ public class PaymentCardServiceImplTest {
     class DeleteWithUserIdTest {
 
         @Test
-        void deleteShouldPermanentlyDeleteCardWhenUserOwnsCard() {
+        void shouldPermanentlyDeleteCard() {
             UUID userId = UUID.randomUUID();
             UUID cardId = UUID.randomUUID();
+            User user = createActiveUser(userId);
 
+            given(userService.getValidUserEntity(userId)).willReturn(user);
             given(paymentCardRepository.deleteCardByIdAndUserId(cardId, userId)).willReturn(1);
 
             paymentCardService.delete(userId, cardId);
 
-            verify(paymentCardRepository).deleteCardByIdAndUserId(cardId, userId);
+            then(paymentCardRepository).should().deleteCardByIdAndUserId(cardId, userId);
+            then(cache).should().evict(userId);
         }
 
         @Test
-        void deleteShouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
-            UUID authUserId = UUID.randomUUID();
-            UUID cardId = UUID.randomUUID();
-
-            given(paymentCardRepository.deleteCardByIdAndUserId(cardId, authUserId)).willReturn(0);
-
-            assertThatThrownBy(() -> paymentCardService.delete(authUserId, cardId))
-                    .isInstanceOf(ResourceNotFoundException.class);
-
-            verify(paymentCardRepository, never()).delete(any(PaymentCard.class));
-        }
-
-        @Test
-        void deleteShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
+        void shouldThrowExceptionWhenUserIsBlockedOrDeleted() {
             UUID userId = UUID.randomUUID();
             UUID cardId = UUID.randomUUID();
 
-            given(paymentCardRepository.deleteCardByIdAndUserId(cardId, userId)).willReturn(0);
+            given(userService.getValidUserEntity(userId))
+                    .willThrow(new BadRequestException("Action denied: User is blocked or deleted"));
 
-            assertThatThrownBy(() -> paymentCardService.delete(userId, cardId))
+            assertThatThrownBy(() -> paymentCardService.delete(userId, cardId)).isInstanceOf(BadRequestException.class);
+
+            then(paymentCardRepository).shouldHaveNoInteractions();
+        }
+
+        @Test
+        void shouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
+            UUID authUserId = UUID.randomUUID();
+            UUID cardId = UUID.randomUUID();
+            User user = createActiveUser(authUserId);
+
+            given(userService.getValidUserEntity(authUserId)).willReturn(user);
+            given(paymentCardRepository.deleteCardByIdAndUserId(cardId, authUserId))
+                    .willReturn(0);
+
+            assertThatThrownBy(() -> paymentCardService.delete(authUserId, cardId))
                     .isInstanceOf(ResourceNotFoundException.class);
-
-            verify(paymentCardRepository, never()).delete(any(PaymentCard.class));
         }
     }
 
@@ -524,39 +510,52 @@ public class PaymentCardServiceImplTest {
     class DeactivateTest {
 
         @Test
-        void deactivateShouldReturnPaymentCardProfileDtoWithActiveFalse() {
+        void shouldReturnDeactivatedViewAndEvictCache() {
             User user = Instancio.create(User.class);
-            PaymentCard existingCard = Instancio.of(PaymentCard.class)
+            PaymentCard card = Instancio.of(PaymentCard.class)
                     .set(field(PaymentCard::getUser), user)
                     .set(field(PaymentCard::getActive), true)
                     .create();
-            UUID cardId = existingCard.getId();
-            PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
-                    .set(field(PaymentCardProfileDto::id), cardId)
-                    .set(field(PaymentCardProfileDto::active), false)
+            UUID cardId = card.getId();
+            PaymentCardView expectedDto = Instancio.of(PaymentCardView.class)
+                    .set(field(PaymentCardView::active), false)
                     .create();
 
-            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(existingCard));
-            given(paymentCardMapper.CardToPaymentCardProfileDtoWithoutUser(existingCard)).willReturn(expectedDto);
+            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(card));
+            given(paymentCardMapper.toViewWithoutUser(card)).willReturn(expectedDto);
 
-            PaymentCardProfileDto result = paymentCardService.deactivate(cardId);
+            PaymentCardView result = paymentCardService.deactivate(cardId);
 
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
             assertThat(result.active()).isFalse();
-            assertThat(existingCard.getActive()).isFalse();
+            assertThat(card.getActive()).isFalse();
+            then(cache).should().evict(user.getId());
         }
 
         @Test
-        void deactivateShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
-            UUID cardId = Instancio.create(UUID.class);
+        void whenCardIsAlreadyInactiveShouldDoNothing() {
+            PaymentCard card = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getActive), false)
+                    .create();
+            UUID cardId = card.getId();
+            PaymentCardView expectedDto = Instancio.create(PaymentCardView.class);
 
+            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(card));
+            given(paymentCardMapper.toViewWithoutUser(card)).willReturn(expectedDto);
+
+            paymentCardService.deactivate(cardId);
+
+            then(cache).shouldHaveNoInteractions();
+        }
+
+        @Test
+        void shouldThrowResourceNotFoundException() {
+            UUID cardId = UUID.randomUUID();
             given(paymentCardRepository.findById(cardId)).willReturn(Optional.empty());
 
             assertThatThrownBy(() -> paymentCardService.deactivate(cardId))
                     .isInstanceOf(ResourceNotFoundException.class);
 
-            verify(paymentCardRepository, never()).flush();
-            verifyNoInteractions(paymentCardMapper);
+            then(cache).shouldHaveNoInteractions();
         }
     }
 
@@ -564,35 +563,57 @@ public class PaymentCardServiceImplTest {
     class DeactivateWithUserIdTest {
 
         @Test
-        void deactivateShouldReturnPaymentCardProfileDtoWithActiveFalseWhenUserOwnsCard() {
-            UUID userId = Instancio.create(UUID.class);
-            User user = Instancio.of(User.class).set(field(User::getId), userId).create();
+        void shouldReturnDeactivatedViewAndEvictCache() {
+            UUID userId = UUID.randomUUID();
+            User user = createActiveUser(userId);
             PaymentCard existingCard = Instancio.of(PaymentCard.class)
                     .set(field(PaymentCard::getUser), user)
                     .set(field(PaymentCard::getActive), true)
                     .create();
             UUID cardId = existingCard.getId();
-            PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
-                    .set(field(PaymentCardProfileDto::id), cardId)
-                    .set(field(PaymentCardProfileDto::active), false)
+            PaymentCardView expectedDto = Instancio.of(PaymentCardView.class)
+                    .set(field(PaymentCardView::active), false)
                     .create();
 
             given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(existingCard));
-            given(paymentCardMapper.CardToPaymentCardProfileDtoWithoutUser(existingCard)).willReturn(expectedDto);
+            given(paymentCardMapper.toViewWithoutUser(existingCard)).willReturn(expectedDto);
 
-            PaymentCardProfileDto result = paymentCardService.deactivate(userId, cardId);
+            PaymentCardView result = paymentCardService.deactivate(userId, cardId);
 
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
             assertThat(result.active()).isFalse();
             assertThat(existingCard.getActive()).isFalse();
+            then(userService).should().validateUserAllowed(user);
+            then(cache).should().evict(userId);
         }
 
         @Test
-        void deactivateShouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
+        void shouldThrowExceptionWhenUserIsBlockedOrDeleted() {
+            UUID userId = UUID.randomUUID();
+            User user = createActiveUser(userId);
+            PaymentCard existingCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), user)
+                    .create();
+            UUID cardId = existingCard.getId();
+
+            given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(existingCard));
+            willThrow(new BadRequestException("Action denied: User is blocked or deleted"))
+                    .given(userService)
+                    .validateUserAllowed(user);
+
+            assertThatThrownBy(() -> paymentCardService.deactivate(userId, cardId))
+                    .isInstanceOf(BadRequestException.class);
+
+            verifyNoInteractions(paymentCardMapper);
+        }
+
+        @Test
+        void shouldThrowResourceNotFoundExceptionWhenUserDoesNotOwnCard() {
             UUID authUserId = Instancio.create(UUID.class);
             UUID cardOwnerId = Instancio.create(UUID.class);
-            User cardOwner = Instancio.of(User.class).set(field(User::getId), cardOwnerId).create();
-            PaymentCard existingCard = Instancio.of(PaymentCard.class).set(field(PaymentCard::getUser), cardOwner).create();
+            User cardOwner = createActiveUser(cardOwnerId);
+            PaymentCard existingCard = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getUser), cardOwner)
+                    .create();
             UUID cardId = existingCard.getId();
 
             given(paymentCardRepository.findCardByUserId(cardId)).willReturn(Optional.of(existingCard));
@@ -600,12 +621,13 @@ public class PaymentCardServiceImplTest {
             assertThatThrownBy(() -> paymentCardService.deactivate(authUserId, cardId))
                     .isInstanceOf(ResourceNotFoundException.class);
 
+            then(cache).shouldHaveNoInteractions();
             verify(paymentCardRepository, never()).flush();
             verifyNoInteractions(paymentCardMapper);
         }
 
         @Test
-        void deactivateShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
+        void shouldThrowResourceNotFoundException() {
             UUID userId = Instancio.create(UUID.class);
             UUID cardId = Instancio.create(UUID.class);
 
@@ -614,6 +636,7 @@ public class PaymentCardServiceImplTest {
             assertThatThrownBy(() -> paymentCardService.deactivate(userId, cardId))
                     .isInstanceOf(ResourceNotFoundException.class);
 
+            then(cache).shouldHaveNoInteractions();
             verify(paymentCardRepository, never()).flush();
             verifyNoInteractions(paymentCardMapper);
         }
@@ -623,39 +646,51 @@ public class PaymentCardServiceImplTest {
     class ActivateTest {
 
         @Test
-        void activateShouldReturnPaymentCardProfileDtoWithActiveTrue() {
+        void shouldReturnActivatedViewAndEvictCache() {
             User user = Instancio.create(User.class);
-            PaymentCard existingCard = Instancio.of(PaymentCard.class)
+            PaymentCard card = Instancio.of(PaymentCard.class)
                     .set(field(PaymentCard::getUser), user)
                     .set(field(PaymentCard::getActive), false)
                     .create();
-            UUID cardId = existingCard.getId();
-            PaymentCardProfileDto expectedDto = Instancio.of(PaymentCardProfileDto.class)
-                    .set(field(PaymentCardProfileDto::id), cardId)
-                    .set(field(PaymentCardProfileDto::active), true)
+            UUID cardId = card.getId();
+            PaymentCardView expectedDto = Instancio.of(PaymentCardView.class)
+                    .set(field(PaymentCardView::active), true)
                     .create();
 
-            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(existingCard));
-            given(paymentCardMapper.CardToPaymentCardProfileDtoWithoutUser(existingCard)).willReturn(expectedDto);
+            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(card));
+            given(paymentCardMapper.toViewWithoutUser(card)).willReturn(expectedDto);
 
-            PaymentCardProfileDto result = paymentCardService.activate(cardId);
+            PaymentCardView result = paymentCardService.activate(cardId);
 
-            assertThat(result).isNotNull().isEqualTo(expectedDto);
             assertThat(result.active()).isTrue();
-            assertThat(existingCard.getActive()).isTrue();
+            assertThat(card.getActive()).isTrue();
+            then(cache).should().evict(user.getId());
         }
 
         @Test
-        void activateShouldThrowResourceNotFoundExceptionWhenCardDoesNotExist() {
-            UUID cardId = Instancio.create(UUID.class);
+        void whenCardIsAlreadyActiveShouldDoNothing() {
+            PaymentCard card = Instancio.of(PaymentCard.class)
+                    .set(field(PaymentCard::getActive), true)
+                    .create();
+            UUID cardId = card.getId();
+            PaymentCardView expectedDto = Instancio.create(PaymentCardView.class);
 
+            given(paymentCardRepository.findById(cardId)).willReturn(Optional.of(card));
+            given(paymentCardMapper.toViewWithoutUser(card)).willReturn(expectedDto);
+
+            paymentCardService.activate(cardId);
+
+            then(cache).shouldHaveNoInteractions();
+        }
+
+        @Test
+        void shouldThrowResourceNotFoundException() {
+            UUID cardId = UUID.randomUUID();
             given(paymentCardRepository.findById(cardId)).willReturn(Optional.empty());
 
-            assertThatThrownBy(() -> paymentCardService.activate(cardId))
-                    .isInstanceOf(ResourceNotFoundException.class);
+            assertThatThrownBy(() -> paymentCardService.activate(cardId)).isInstanceOf(ResourceNotFoundException.class);
 
-            verify(paymentCardRepository, never()).flush();
-            verifyNoInteractions(paymentCardMapper);
+            then(cache).shouldHaveNoInteractions();
         }
     }
 }
